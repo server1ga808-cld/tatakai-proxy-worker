@@ -9,9 +9,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let finalServers: any[] = [];
     let seenUrls = new Set<string>();
     
-    // ১. Absolute Episode Calculation (AniList থেকে)
     const aniMeta = await getAniListMeta(input.anilist_id);
+    // Absolute Episode Calculation (যেমন JJK S2 E1 = 24 + 1 = 25)
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
+    const userSeason = input.season || 1;
 
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
@@ -28,7 +29,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             if (input.is_movie) {
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
-                                // Absolute Episode বা User Episode দুটোই চেক করবে
                                 const matched = list.find((item: any) => {
                                     const match = String(item.name).match(/\d+/);
                                     if (!match) return false;
@@ -52,13 +52,20 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         if (input.is_movie) {
                             targetEp = episodes[0]; 
                         } else {
-                            // 🎯 Direct Watch URL Construction (Absolute Episode)
-                            const directId = `${cand.baseName}-episode-${absoluteEpisode}`;
-                            const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${directId}`, 8000);
-                            if (checkRes.ok) {
-                                const checkJson = await checkRes.json();
-                                if (checkJson?.data?.sources) {
-                                    targetEp = { id: directId };
+                            // 🎯 প্রথমে Absolute Episode দিয়ে সরাসরি Watch URL ট্রাই
+                            const baseForAbs = `${cand.baseName}-season-${userSeason}`;
+                            const absId1 = `${baseForAbs}-episode-${absoluteEpisode}`;
+                            const absId2 = `${cand.baseName}-2nd-season-episode-${absoluteEpisode}`; // বিশেষ ক্ষেত্রে
+                            
+                            for (const tryId of [absId1, absId2, `${cand.slug}-episode-${absoluteEpisode}`]) {
+                                if (!tryId.includes('episode-')) continue;
+                                const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
+                                if (checkRes.ok) {
+                                    const checkJson = await checkRes.json();
+                                    if (checkJson?.data?.sources) {
+                                        targetEp = { id: tryId };
+                                        break;
+                                    }
                                 }
                             }
 
@@ -70,8 +77,11 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                         const idMatch = String(e.id).match(/episode-(\d+)/i);
                                         if (idMatch) idEpNum = parseInt(idMatch[1], 10);
                                     }
-                                    if (idEpNum !== -1 && idEpNum !== input.episode && idEpNum !== absoluteEpisode) return false;
+                                    // API-তে "number" যদি ১ থাকে, কিন্তু id-তে episode-47 থাকে, তবে 
+                                    // আমরা number: 1 কে ভ্যালিড ধরবো (কারণ Tatakai API-র ডেটা এরকমই)
                                     if (e.number && Number(e.number) === input.episode) return true;
+                                    // অথবা যদি id-তে absolute episode থাকে
+                                    if (idEpNum !== -1 && idEpNum === absoluteEpisode) return true;
                                     return false;
                                 });
                             }
