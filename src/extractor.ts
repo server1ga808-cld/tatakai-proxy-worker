@@ -1,9 +1,10 @@
 import { fetchWithTimeout, cleanIframeUrl } from './utils';
 import { Candidate } from './searcher';
+import { ProxyInput } from './types';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
-export async function extractStreams(candidates: Candidate[], episode: number, is_movie: boolean) {
+export async function extractStreams(candidates: Candidate[], input: ProxyInput) {
     let finalServers: any[] = [];
     let seenUrls = new Set<string>();
     
@@ -22,13 +23,12 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
                         ['filemoon', 'servabyss'].forEach(serverName => {
                             if (serverObj[serverName] && Array.isArray(serverObj[serverName])) {
                                 const list = serverObj[serverName];
-                                if (is_movie) {
+                                if (input.is_movie) {
                                     if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                                 } else {
-                                    // Hindi-র এপিসোড ম্যাচিং
                                     const matched = list.find((item: any) => {
                                         const match = String(item.name).match(/\d+/);
-                                        return match && parseInt(match[0], 10) === episode;
+                                        return match && parseInt(match[0], 10) === input.episode;
                                     });
                                     if (matched) servers.push({ server: serverName, url: matched.url, source: 'tatakai' });
                                 }
@@ -42,55 +42,48 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
                         const episodes = infoJson?.data?.episodes || [];
                         
                         let targetEp = null;
-                        if (is_movie) {
+                        if (input.is_movie) {
                             targetEp = episodes[0]; 
                         } else {
-                            // 🎯 Strict Episode Matching (id এবং url কে প্রায়োরিটি দেওয়া হচ্ছে)
                             targetEp = episodes.find((e: any) => {
-                                // ১. id থেকে এপিসোড নাম্বার বের করা
                                 let idEpNum = -1;
                                 if (e.id) {
                                     const idMatch = String(e.id).match(/episode-(\d+)/i) || String(e.id).match(/-(\d+)$/);
                                     if (idMatch) idEpNum = parseInt(idMatch[1], 10);
                                 }
-
-                                // ২. url থেকে এপিসোড নাম্বার বের করা
                                 let urlEpNum = -1;
                                 if (e.url) {
                                     const urlMatch = String(e.url).match(/episode-(\d+)/i);
                                     if (urlMatch) urlEpNum = parseInt(urlMatch[1], 10);
                                 }
-
-                                // যদি id বা url-এ ভিন্ন এপিসোড নাম্বার থাকে (যেমন episode-26), তবে বাদ দাও
-                                if (idEpNum !== -1 && idEpNum !== episode) return false;
-                                if (urlEpNum !== -1 && urlEpNum !== episode) return false;
-
-                                // যদি টাইটেলে "Full Movie" বা "Movie" থাকে কিন্তু আমরা TV এপিসোড খুঁজছি, তবে বাদ দাও
-                                if (e.title && e.title.toLowerCase().includes('movie') && !is_movie) return false;
-
-                                // ৩. number ফিল্ড চেক (সবশেষে)
-                                if (e.number && Number(e.number) === episode) return true;
-
-                                // ৪. title ফিল্ড চেক
+                                if (idEpNum !== -1 && idEpNum !== input.episode) return false;
+                                if (urlEpNum !== -1 && urlEpNum !== input.episode) return false;
+                                if (e.title && e.title.toLowerCase().includes('movie') && !input.is_movie) return false;
+                                if (e.number && Number(e.number) === input.episode) return true;
                                 if (e.title) {
                                     const titleMatch = String(e.title).match(/\d+/);
-                                    if (titleMatch && parseInt(titleMatch[0], 10) === episode) return true;
+                                    if (titleMatch && parseInt(titleMatch[0], 10) === input.episode) return true;
                                 }
-
                                 return false;
                             });
                         }
                         
-                        // যদি উপরে না পাওয়া যায়, তবে Direct Watch URL ফলব্যাক
-                        if (!targetEp && !is_movie) {
-                            const baseName = cand.slug.replace(/-season-\d+$/, ''); 
-                            const possibleEpId = `${baseName}-episode-${episode}`;
+                        // 🎯 Smart Fallback: যদি episodes অ্যারেতে সঠিক এপিসোড না পাওয়া যায়
+                        if (!targetEp && !input.is_movie) {
+                            const titlesToTry = [input.romaji_title, input.title, input.english_title].filter(Boolean) as string[];
                             
-                            const directWatchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${possibleEpId}`);
-                            if (directWatchRes.ok) {
-                                const directJson = await directWatchRes.json();
-                                if (directJson?.data?.title) {
-                                    targetEp = { id: possibleEpId };
+                            for (const t of titlesToTry) {
+                                // টাইটেল থেকে স্লাগ তৈরি (যেমন: "Kimetsu no Yaiba" -> "kimetsu-no-yaiba")
+                                const cleanBase = t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                                const possibleEpId = `${cleanBase}-episode-${input.episode}`;
+                                
+                                const directWatchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${possibleEpId}`);
+                                if (directWatchRes.ok) {
+                                    const directJson = await directWatchRes.json();
+                                    if (directJson?.data?.sources) {
+                                        targetEp = { id: possibleEpId };
+                                        break; // পেয়ে গেলে আর লুপ চালানোর দরকার নেই
+                                    }
                                 }
                             }
                         }
