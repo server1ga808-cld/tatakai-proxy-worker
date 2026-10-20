@@ -41,7 +41,7 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
                         if (is_movie) {
                             targetEp = episodes[0]; 
                         } else {
-                            // 🎯 স্মার্ট এপিসোড ম্যাচিং (number, id, title তিনটাই চেক করবে)
+                            // 🎯 স্মার্ট এপিসোড ম্যাচিং (number, id, title, url — সব চেক করবে)
                             targetEp = episodes.find((e: any) => {
                                 // ১. number ফিল্ড চেক
                                 if (e.number && Number(e.number) === episode) return true;
@@ -57,8 +57,33 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
                                     const match = String(e.title).match(/\d+/);
                                     if (match && parseInt(match[0], 10) === episode) return true;
                                 }
+
+                                // ৪. url ফিল্ড চেক (যেমন: /watch/kimetsu-no-yaiba-episode-1/)
+                                if (e.url) {
+                                    const match = String(e.url).match(/episode-(\d+)/i);
+                                    if (match && parseInt(match[1], 10) === episode) return true;
+                                }
+
                                 return false;
                             });
+                        }
+                        
+                        // 🚀 যদি episodes অ্যারেতে সঠিক এপিসোড না পাওয়া যায়, তবে সরাসরি watch URL তৈরি করে ট্রাই করি
+                        if (!targetEp && !is_movie) {
+                            // Tatakai-র স্লাগ থেকে বেস নাম বের করি (যেমন: demon-slayer -> kimetsu-no-yaiba)
+                            // তবে এখানে আমরা সরাসরি watch URL প্যাটার্ন দিয়ে ট্রাই করবো
+                            const baseName = cand.slug.replace(/-season-\d+$/, ''); 
+                            const possibleEpId = `${baseName}-episode-${episode}`;
+                            
+                            // সরাসরি watch এন্ডপয়েন্টে হিট করে দেখি
+                            const directWatchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${possibleEpId}`);
+                            if (directWatchRes.ok) {
+                                const directJson = await directWatchRes.json();
+                                if (directJson?.data?.title) {
+                                    // সফল হলে সেই আইডি দিয়েই সোর্স আনবো
+                                    targetEp = { id: possibleEpId };
+                                }
+                            }
                         }
                         
                         if (targetEp && targetEp.id) {
