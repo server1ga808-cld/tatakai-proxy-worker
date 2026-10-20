@@ -22,9 +22,13 @@ export default {
                 });
             }
 
+            // ১. AniList + Tatakai Search
             const candidates = await getCandidateSlugs(input);
-            const hindiStreams = await extractStreams(candidates, input.episode, input.is_movie);
+            
+            // ২. স্ট্রিম লিংক এক্সট্রাক্ট (এখানে পুরো input পাস করা হলো)
+            const hindiStreams = await extractStreams(candidates, input);
 
+            // ৩. রেসপন্স রিটার্ন
             return new Response(JSON.stringify({ hindi: hindiStreams }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
