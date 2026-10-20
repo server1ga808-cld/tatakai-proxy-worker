@@ -5,7 +5,7 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 export async function extractStreams(candidates: Candidate[], episode: number, is_movie: boolean) {
     let finalServers: any[] = [];
-    let seenUrls = new Set<string>(); // ডুপ্লিকেট লিংক রিমুভ করার জন্য
+    let seenUrls = new Set<string>();
     
     for (let i = 0; i < candidates.length; i += 2) {
         const batch = candidates.slice(i, i + 2);
@@ -41,7 +41,24 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
                         if (is_movie) {
                             targetEp = episodes[0]; 
                         } else {
-                            targetEp = episodes.find((e: any) => matchEpisodeNumber(String(e.number), episode));
+                            // 🎯 স্মার্ট এপিসোড ম্যাচিং (number, id, title তিনটাই চেক করবে)
+                            targetEp = episodes.find((e: any) => {
+                                // ১. number ফিল্ড চেক
+                                if (e.number && Number(e.number) === episode) return true;
+                                
+                                // ২. id ফিল্ড চেক (যেমন: kimetsu-no-yaiba-episode-1)
+                                if (e.id) {
+                                    const match = String(e.id).match(/episode-(\d+)/i) || String(e.id).match(/-(\d+)$/);
+                                    if (match && parseInt(match[1], 10) === episode) return true;
+                                }
+
+                                // ৩. title ফিল্ড চেক
+                                if (e.title) {
+                                    const match = String(e.title).match(/\d+/);
+                                    if (match && parseInt(match[0], 10) === episode) return true;
+                                }
+                                return false;
+                            });
                         }
                         
                         if (targetEp && targetEp.id) {
@@ -66,11 +83,9 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
             return servers;
         }));
         
-        // 🎯 মার্জিং লজিক (Hindi + Desi সবগুলো রাখবে)
         batchResults.forEach(res => {
             if (res.status === 'fulfilled' && res.value.length > 0) {
                 res.value.forEach((serverObj: any) => {
-                    // একই লিংক বারবার আসলে একবারই নেবে
                     if (!seenUrls.has(serverObj.url)) {
                         seenUrls.add(serverObj.url);
                         finalServers.push(serverObj);
@@ -79,7 +94,6 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
             }
         });
         
-        // Early Exit: ৫ বা তার বেশি সার্ভার পেলে লুপ ব্রেক
         if (finalServers.length >= 5) {
             break; 
         }
