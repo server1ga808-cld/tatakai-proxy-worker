@@ -18,10 +18,12 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     const userSeason = input.season || 1;
-    const absoluteSeason = userSeason + (aniMeta?.seasonsBefore || 0);
     const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
 
+    // Root Title বের করা (যেমন: "Jujutsu Kaisen 2nd Season" -> "Jujutsu Kaisen")
     const rootTitle = titleToUse.replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+)/gi, '').trim();
+    
+    // তিন ধরনের টাইটেল দিয়েই সার্চ করা হবে
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
     for (const query of queries) {
@@ -35,13 +37,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
-                if (!isTitleMatch(query, anime.title)) return;
-                // এখানে কোনো Strict Season Filter নেই, যাতে স্লাগ মিস না হয়
-                candidates.push({ 
-                    provider: 'hindi', 
-                    slug: anime.slug, 
-                    baseName: anime.slug.replace(/-season-\d+$/, '') 
-                });
+                if (isTitleMatch(query, anime.title)) {
+                    candidates.push({ 
+                        provider: 'hindi', 
+                        slug: anime.slug, 
+                        baseName: anime.slug.replace(/-season-\d+$/, '') 
+                    });
+                }
             });
         }
 
@@ -62,13 +64,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 });
             });
         }
-        
-        // যদি রেজাল্ট পাওয়া যায়, তবে প্রথম কুয়েরিতেই ব্রেক করবো (ফাস্ট রেসপন্স)
-        if (candidates.length > 0) break;
     }
 
+    // ডুপ্লিকেট স্লাগ রিমুভ
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.slug, c));
     
-    return Array.from(uniqueCandidates.values()).slice(0, 6); // সর্বোচ্চ ৬টি স্লাগ
+    return Array.from(uniqueCandidates.values()).slice(0, 6);
 }
