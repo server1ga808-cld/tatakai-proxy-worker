@@ -4,7 +4,8 @@ import { Candidate } from './searcher';
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 export async function extractStreams(candidates: Candidate[], episode: number, is_movie: boolean) {
-    let bestResult: any[] = [];
+    let finalServers: any[] = [];
+    let seenUrls = new Set<string>(); // ডুপ্লিকেট লিংক রিমুভ করার জন্য
     
     for (let i = 0; i < candidates.length; i += 2) {
         const batch = candidates.slice(i, i + 2);
@@ -65,19 +66,24 @@ export async function extractStreams(candidates: Candidate[], episode: number, i
             return servers;
         }));
         
+        // 🎯 মার্জিং লজিক (Hindi + Desi সবগুলো রাখবে)
         batchResults.forEach(res => {
             if (res.status === 'fulfilled' && res.value.length > 0) {
-                if (res.value.length > bestResult.length) {
-                    bestResult = res.value;
-                }
+                res.value.forEach((serverObj: any) => {
+                    // একই লিংক বারবার আসলে একবারই নেবে
+                    if (!seenUrls.has(serverObj.url)) {
+                        seenUrls.add(serverObj.url);
+                        finalServers.push(serverObj);
+                    }
+                });
             }
         });
         
-        // Early Exit
-        if (bestResult.length >= 5) {
+        // Early Exit: ৫ বা তার বেশি সার্ভার পেলে লুপ ব্রেক
+        if (finalServers.length >= 5) {
             break; 
         }
     }
     
-    return bestResult;
+    return finalServers;
 }
