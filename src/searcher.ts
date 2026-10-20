@@ -36,15 +36,12 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
                 if (!isTitleMatch(query, anime.title)) return;
-
-                // 🎯 Strict Season Rejection: S2 চাইলে S1 এর স্লাগ নেবে না
-                const apiTitle = anime.title.toLowerCase();
-                const slug = anime.slug.toLowerCase();
-                const hasSeason = /season[\s-]*\d+|(\d+)(?:st|nd|rd|th)[\s-]*season/i.test(apiTitle) || /season-\d+/i.test(slug);
-
-                if (userSeason > 1 && !hasSeason) return; // S1 এর স্লাগ ব্লক
-
-                candidates.push({ provider: 'hindi', slug: anime.slug, baseName: slug.replace(/-season-\d+$/, '') });
+                // এখানে কোনো Strict Season Filter নেই, যাতে স্লাগ মিস না হয়
+                candidates.push({ 
+                    provider: 'hindi', 
+                    slug: anime.slug, 
+                    baseName: anime.slug.replace(/-season-\d+$/, '') 
+                });
             });
         }
 
@@ -58,26 +55,20 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 if (targetFormat === 'MOVIE' && anime.type !== 'MOVIE') return;
                 if (targetFormat !== 'MOVIE' && anime.type === 'MOVIE') return;
 
-                const apiTitle = anime.title.toLowerCase();
-                const slug = anime.id.toLowerCase();
-                const seasonMatch = apiTitle.match(/(?:season|s)\s*(\d+)/i) || slug.match(/(?:season|s)-(\d+)/i) || apiTitle.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
-
-                if (seasonMatch) {
-                    const apiSeason = parseInt(seasonMatch[1], 10);
-                    if (apiSeason !== userSeason && apiSeason !== absoluteSeason) return;
-                } else if (userSeason > 1 && absoluteSeason > 1) {
-                    return; // S1 স্লাগ ব্লক
-                }
-
-                candidates.push({ provider: 'desi', slug: anime.id, baseName: slug.replace(/-season-\d+$/, '') });
+                candidates.push({ 
+                    provider: 'desi', 
+                    slug: anime.id, 
+                    baseName: anime.id.replace(/-season-\d+$/, '') 
+                });
             });
         }
         
+        // যদি রেজাল্ট পাওয়া যায়, তবে প্রথম কুয়েরিতেই ব্রেক করবো (ফাস্ট রেসপন্স)
         if (candidates.length > 0) break;
     }
 
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.slug, c));
     
-    return Array.from(uniqueCandidates.values()).slice(0, 4);
+    return Array.from(uniqueCandidates.values()).slice(0, 6); // সর্বোচ্চ ৬টি স্লাগ
 }
