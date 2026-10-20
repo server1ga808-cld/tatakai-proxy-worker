@@ -30,7 +30,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000)
         ]);
 
-        // Hindi Search (এখানে স্ট্রিক্ট সিজন ফিল্টার নেই, কারণ Hindi Absolute Episode ব্যবহার করে)
+        // Hindi Search
         if (hindiRes.status === 'fulfilled' && hindiRes.value.ok) {
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
@@ -45,7 +45,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             });
         }
 
-        // Desi Search (এখানে Strict Season Filtering আছে, যাতে S1, S3 বাদ পড়ে)
+        // Desi Search
         if (desiRes.status === 'fulfilled' && desiRes.value.ok) {
             const data = await desiRes.value.json();
             const list = data?.data?.results || [];
@@ -55,32 +55,35 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 if (targetFormat === 'MOVIE' && anime.type !== 'MOVIE') return;
                 if (targetFormat !== 'MOVIE' && anime.type === 'MOVIE') return;
 
-                // 🎯 Strict Season Filtering for Desi
                 const apiTitle = anime.title.toLowerCase();
                 const slug = anime.id.toLowerCase();
                 const seasonMatch = apiTitle.match(/(?:season|s)\s*(\d+)/i) || slug.match(/(?:season|s)[\s-]*(\d+)/i) || apiTitle.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
 
                 if (seasonMatch) {
                     const apiSeason = parseInt(seasonMatch[1], 10);
-                    // যদি API-র সিজন আর ইউজারের সিজন না মেলে, বাদ দাও (যেমন S2 চাইলে S3 বাদ যাবে)
                     if (apiSeason !== userSeason && apiSeason !== absoluteSeason) return;
-                } else {
-                    // যদি API-তে সিজন নাম্বার না থাকে (মানে সিজন ১), আর ইউজার সিজন ১ এর বেশি চায়, বাদ দাও
-                    if (userSeason > 1) return;
+                } else if (userSeason > 1) {
+                    return;
                 }
 
                 candidates.push({ 
                     provider: 'desi', 
                     slug: anime.id, 
-                    baseName: anime.id.replace(/-season-\d+$/, '') 
+                    baseName: anime.id.replace(/-season-\d+$/, '').replace(/-2nd-season$/, '') 
                 });
             });
         }
     }
 
-    // ডুপ্লিকেট রিমুভ
+    // 🎯 Strict Deduplication (Base Name + Provider)
     const uniqueCandidates = new Map();
-    candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.slug, c));
+    candidates.forEach(c => {
+        const key = `${c.provider}-${c.baseName}`;
+        // যদি আগে থেকে থাকে, তবে শুধু তাকেই রাখবো (যাতে S1, S2, S3 একসাথে না আসে)
+        if (!uniqueCandidates.has(key)) {
+            uniqueCandidates.set(key, c);
+        }
+    });
     
     return Array.from(uniqueCandidates.values());
 }
