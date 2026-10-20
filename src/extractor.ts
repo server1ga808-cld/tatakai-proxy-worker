@@ -10,6 +10,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
+    // Absolute Episode (যেমন JJK S2 E1 = 24 + 1 = 25)
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
 
     const extractionPromises = candidates.map(async (cand) => {
@@ -30,12 +31,23 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             if (input.is_movie) {
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
-                                // 🎯 Robust Matching: "Episode 25 (S2EP01)" থেকে 25, 2, 01 সব বের করবে
-                                const matched = list.find((item: any) => {
+                                // 🎯 শুধুমাত্র Absolute Episode (25) ম্যাচ করবো। input.episode (1) ম্যাচ করবো না।
+                                let matched = list.find((item: any) => {
                                     const nums = String(item.name).match(/\d+/g) || [];
                                     const numArray = nums.map((n: string) => parseInt(n, 10));
-                                    return numArray.includes(absoluteEpisode) || numArray.includes(input.episode);
+                                    return numArray.includes(absoluteEpisode); 
                                 });
+
+                                // যদি absoluteEpisode না পাওয়া যায় (যেমন S1-এর জন্য absoluteEpisode = 1), 
+                                // তবেই input.episode চেক করবো
+                                if (!matched) {
+                                    matched = list.find((item: any) => {
+                                        const nums = String(item.name).match(/\d+/g) || [];
+                                        const numArray = nums.map((n: string) => parseInt(n, 10));
+                                        return numArray.includes(input.episode);
+                                    });
+                                }
+
                                 if (matched) servers.push({ server: serverName, url: matched.url, source: 'tatakai' });
                             }
                         }
@@ -57,26 +69,38 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         if (input.is_movie) {
                             targetEpId = episodes[0].id; 
                         } else {
-                            const foundEp = episodes.find((e: any) => {
-                                if (e.number && Number(e.number) === input.episode) return true;
-                                if (e.id) {
-                                    const idMatch = String(e.id).match(/episode-(\d+)/i);
-                                    if (idMatch && parseInt(idMatch[1], 10) === input.episode) return true;
-                                }
-                                return false;
-                            });
+                            // 🎯 ১. Direct Slug Construction (জুজুৎসু কাইসেন S2-এর জন্য)
+                            // আমরা API-র number: 1 (যা episode-47 কে পয়েন্ট করে) এর ওপর ভরসা করব না
+                            const directIds = [
+                                `${cand.slug}-episode-${input.episode}`, // jujutsu-kaisen-season-2-episode-1
+                                `${cand.baseName}-season-${input.season}-episode-${input.episode}`,
+                                `${cand.slug.replace('season-2', '2nd-season')}-episode-${input.episode}` // jujutsu-kaisen-2nd-season-episode-1
+                            ];
 
-                            if (foundEp && foundEp.id) {
-                                targetEpId = foundEp.id;
-                            } else {
-                                // Direct Watch URL (Season-Specific)
-                                const directId = `${cand.slug}-episode-${input.episode}`;
-                                const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${directId}`, 8000);
+                            for (const tryId of directIds) {
+                                const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
                                 if (checkRes.ok) {
                                     const checkJson = await checkRes.json();
-                                    if (checkJson?.data?.sources) {
-                                        targetEpId = directId;
+                                    if (checkJson?.data?.sources && checkJson.data.sources.length > 0) {
+                                        targetEpId = tryId;
+                                        break; // সঠিক লিংক পেয়ে গেছি, লুপ ব্রেক করো
                                     }
+                                }
+                            }
+
+                            // 🎯 ২. Fallback: যদি ডাইরেক্ট আইডি না পাওয়া যায়, তবে episodes[] অ্যারে চেক
+                            if (!targetEpId) {
+                                const foundEp = episodes.find((e: any) => {
+                                    // id-র ভেতরে episode-1 আছে কি না চেক
+                                    if (e.id) {
+                                        const idMatch = String(e.id).match(/episode-(\d+)/i);
+                                        if (idMatch && parseInt(idMatch[1], 10) === input.episode) return true;
+                                    }
+                                    return false;
+                                });
+
+                                if (foundEp && foundEp.id) {
+                                    targetEpId = foundEp.id;
                                 }
                             }
                         }
