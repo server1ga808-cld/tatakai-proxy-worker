@@ -7,6 +7,7 @@ export interface AniListMeta {
     romajiTitle: string;
     year: number;
     seasonsBefore: number;
+    prequelEpisodes: number; // আগের সব সিজনের মোট এপিসোড
 }
 
 async function fetchMedia(id: number) {
@@ -17,12 +18,14 @@ async function fetchMedia(id: number) {
         startDate { year }
         seasonYear
         title { english romaji }
+        episodes
         relations {
           edges {
             relationType
             node {
               id
               format
+              episodes
               title { english romaji }
               startDate { year }
             }
@@ -58,11 +61,12 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
     if (!media) return null;
 
     let seasonsBefore = 0;
+    let prequelEpisodes = 0;
     let currentMedia = media;
     let visited = new Set<number>();
     visited.add(anilistId);
 
-    // ৫ লেভেল পর্যন্ত পেছনে চেক করবে (S1 -> S2 -> S3 -> S4)
+    // Prequel Chain Analysis
     for (let depth = 0; depth < 5; depth++) {
         const prequels = currentMedia.relations?.edges?.filter(
             (e: any) => e.relationType === 'PREQUEL' && e.node.format === 'TV'
@@ -75,8 +79,8 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         if (bestPrequel && !visited.has(bestPrequel.node.id)) {
             visited.add(bestPrequel.node.id);
             seasonsBefore++;
+            prequelEpisodes += (bestPrequel.node.episodes || 0); // আগের সিজনের এপিসোড যোগ
             
-            // পরের প্রিকুয়েল চেইন চেক করার জন্য ডেটা ফেচ
             const prequelMedia = await fetchMedia(bestPrequel.node.id);
             if (!prequelMedia) break;
             currentMedia = prequelMedia;
@@ -90,7 +94,8 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         englishTitle: media.title?.english || '',
         romajiTitle: media.title?.romaji || '',
         year: media.startDate?.year || media.seasonYear || 0,
-        seasonsBefore
+        seasonsBefore,
+        prequelEpisodes
     };
 
     cache.set(anilistId, { data: meta, expiry: now + 5 * 60 * 1000 });
