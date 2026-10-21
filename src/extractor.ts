@@ -15,7 +15,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
-    // Regex for S02E01 (strict boundary, যাতে S02E10 না ধরে)
+    // 🎯 Strict Regex: S01E1 ম্যাচ করার সময় S01E10 ব্লক করবে (?!\d)
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
@@ -35,7 +35,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
 
-    // 🚀 TURBO MODE (Parallel Fetch)
     const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
@@ -54,16 +53,19 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             if (input.is_movie) {
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
-                                // ১. URL Regex Match
-                                let matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
-                                // ২. Absolute Episode Match
+                                let matched = null;
+                                // Regex Match (শুধুমাত্র সিজন ১ বা মুভির জন্য)
+                                if (!aniMeta || aniMeta.prequelEpisodes === 0) {
+                                    matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
+                                }
+                                // Absolute Episode Match
                                 if (!matched) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
-                                // 🎯 ৩. Direct Episode Match (শুধুমাত্র সিজন ১ বা মুভির জন্য, সিক্যুয়েলে নয়)
+                                // Direct Episode Match (শুধুমাত্র সিজন ১ এর জন্য, Bleach ব্লক করতে)
                                 if (!matched && (!aniMeta || aniMeta.prequelEpisodes === 0)) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
@@ -107,7 +109,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                     servers.push({ server: src.server, url: cleanIframeUrl(src.url), source: 'tatakai' });
                                 }
                             });
-                            if (servers.length > 0) break; // পেলে ব্রেক
+                            if (servers.length > 0) break;
                         }
                     }
                 }
