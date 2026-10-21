@@ -25,6 +25,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
         ]);
 
+        // Hindi Search
         if (hindiRes.status === 'fulfilled' && hindiRes.value.ok) {
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
@@ -35,6 +36,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             });
         }
 
+        // Desi Search
         if (desiRes.status === 'fulfilled' && desiRes.value.ok) {
             const data = await desiRes.value.json();
             const list = data?.data?.results || [];
