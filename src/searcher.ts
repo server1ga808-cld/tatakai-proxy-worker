@@ -14,24 +14,28 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     let candidates: Candidate[] = [];
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
 
-    // 🎯 ১. রুট টাইটেল (Season, Arc বাদ দিয়ে)
     const rootTitle = titleToUse
         .replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+|part\s+\d+)/gi, '')
         .replace(/(?:entertainment district|mugen train|infinity castle|swordsmith village|hashira training)\s*arc/gi, '')
         .trim();
 
-    // 🎯 ২. মেইন টাইটেল (কোলন দিয়ে স্প্লিট করে প্রথম অংশ, যেমন "Demon Slayer")
     const mainTitle = titleToUse.split(':')[0].trim();
 
-    const queries = [titleToUse, romajiToUse, rootTitle, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    let queries = [titleToUse, romajiToUse, rootTitle];
+    
+    // 🎯 Bleach Fix: যদি prequelEpisodes > 0 হয় (মানে সিক্যুয়েল), তবে mainTitle ("Bleach") সার্চ করব না
+    if (mainTitle && (!aniMeta || aniMeta.prequelEpisodes === 0)) {
+        queries.push(mainTitle);
+    }
+    
+    const validQueries = queries.filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    // Fully Parallel Search
-    const searchPromises = queries.map(async (query) => {
+    // 🎯 Fully Parallel Search
+    const searchPromises = validQueries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 10000),
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
