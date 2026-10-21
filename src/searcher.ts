@@ -17,14 +17,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
-    const userSeason = input.season || 1;
     const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
 
-    // রুট টাইটেল (সিজন/আর্ক নাম বাদ দিয়ে)
     const rootTitle = titleToUse.replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+|part\s+\d+)/gi, '').trim();
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    for (const query of queries) {
+    // 🎯 প্যারালালি সব কুয়েরি সার্চ করা (রেসপন্স টাইম কমাতে)
+    const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 8000),
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000)
@@ -36,8 +35,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
                 if (isTitleMatch(query, anime.title)) {
-                    // Base Name বের করা (যেমন: jujutsu-kaisen-season-2 -> jujutsu-kaisen)
-                    const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                    const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                     candidates.push({ provider: 'hindi', rawSlug: anime.slug, baseName });
                 }
             });
@@ -49,24 +47,19 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const list = data?.data?.results || [];
             list.forEach((anime: any) => {
                 if (!isTitleMatch(query, anime.title)) return;
-
-                // Strict Format Filtering
                 if (targetFormat === 'MOVIE' && anime.type !== 'MOVIE') return;
                 if (targetFormat !== 'MOVIE' && anime.type === 'MOVIE') return;
 
-                // Base Name বের করা
-                const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
             });
         }
+    });
 
-        // যদি রেজাল্ট পাওয়া যায়, তবে লুপ ব্রেক
-        if (candidates.length > 0) break;
-    }
+    await Promise.allSettled(searchPromises); // সব সার্চ একসাথে শেষ হবে
 
-    // ডুপ্লিকেট রিমুভ
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
     
-    return Array.from(uniqueCandidates.values()).slice(0, 4);
+    return Array.from(uniqueCandidates.values()).slice(0, 6);
 }
