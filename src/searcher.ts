@@ -26,7 +26,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    // 🎯 Sequential Search (Render API বাঁচাতে)
     for (const query of queries) {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 8000),
@@ -67,16 +66,16 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                     if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
                 }
 
+                // 🎯 Strict Season Filtering সরিয়ে দেওয়া হলো। এখন extractor নিজেই absolute & user episode ট্রাই করবে।
                 const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
             });
         }
 
-        // 🎯 যদি অন্তত ২টি ক্যান্ডিডেট পেয়ে যাই, তবে পরের টাইটেল সার্চ করার দরকার নেই (Render API বাঁচাতে)
-        if (candidates.length >= 2) break;
+        if (candidates.length >= 4) break; 
     }
 
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
-    return Array.from(uniqueCandidates.values()).slice(0, 3); // সর্বোচ্চ ৩টি স্লাগ
+    return Array.from(uniqueCandidates.values()).slice(0, 4);
 }
