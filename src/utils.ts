@@ -26,54 +26,47 @@ export function cleanIframeUrl(htmlString: string): string {
   return htmlString;
 }
 
-export function getLevenshteinDistance(a: string, b: string): number {
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  return matrix[b.length][a.length];
+// 🎯 সিক্যুয়েল কি না চেক (Bleach TYBW বা S2+ হলে true)
+export function isSequelTitle(title: string, romajiTitle?: string): boolean {
+  const combined = `${title} ${romajiTitle || ''}`.toLowerCase();
+  return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part/i.test(combined);
 }
 
-// 🎯 Universal Strict Matcher (Bleach 2004 ব্লক করতে)
+// 🎯 Universal Strict Title Matcher
 export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
 
+  // মুভি বনাম সিরিজ চেক
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
-  // স্টপ ওয়ার্ড (যেমন: the, of, a) এবং সংখ্যা বাদ দেওয়া
-  const stopWords = ['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'part', 'season', 'cour', 'arc', 'movie'];
+  // 🎯 "2nd", "3rd" ইত্যাদি বাদ দেওয়া
+  const stripSuffixes = (s: string) => s.replace(/\b\d+(st|nd|rd|th)\b/g, '');
+  const sClean = stripSuffixes(cleanSearch);
+  const aClean = stripSuffixes(cleanApi);
+
+  const stopWords = ['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'part', 'season', 'cour', 'arc', 'movie', 'hen'];
   const getKeywords = (str: string) => str.split(/\s+/).filter(w => w.length > 0 && !stopWords.includes(w) && !/^\d+$/.test(w));
 
-  const searchWords = getKeywords(cleanSearch);
-  const apiWords = getKeywords(cleanApi);
+  const sWords = getKeywords(sClean);
+  const aWords = getKeywords(aClean);
 
-  if (searchWords.length === 0 || apiWords.length === 0) return false;
+  if (sWords.length === 0 || aWords.length === 0) return false;
 
-  let matches = 0;
-  for (const sw of searchWords) {
-    if (apiWords.includes(sw)) matches++;
+  // 🎯 Bleach 2004 ব্লক করার মেইন লজিক
+  const isSearchSequel = isSequelTitle(searchTitle);
+  const isApiSequel = isSequelTitle(apiTitle);
+  if (isSearchSequel && !isApiSequel) return false;
+
+  // যদি API-র টাইটেল ১ শব্দের হয় (যেমন "Frieren"), তবে সার্চের প্রথম শব্দের সাথে মিলতে হবে
+  if (aWords.length === 1) {
+      return sWords[0] === aWords[0];
   }
 
-  // 🎯 রুল: সার্চের অন্তত ৭০% শব্দ API-তে থাকতে হবে (Bleach TYBW vs Bleach ব্লক করতে)
-  const searchMatchRatio = matches / searchWords.length;
-  if (searchMatchRatio < 0.7) return false;
-
-  // যদি API-তে খুব কম শব্দ থাকে (যেমন শুধু "Bleach"), তবে সেটা ব্লক করব (যদি সার্চে ৪+ শব্দ থাকে)
-  if (searchWords.length >= 4 && apiWords.length <= 1) return false;
-
-  return true;
+  let matches = 0;
+  for (const sw of sWords) {
+    if (aWords.includes(sw)) matches++;
+  }
+  return (matches / sWords.length) >= 0.5; 
 }
