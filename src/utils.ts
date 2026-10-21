@@ -46,25 +46,41 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-// 🎯 স্ট্রিক্ট টাইটেল ম্যাচ (Bleach 2004 ব্লক করতে)
-export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
+// 🎯 পুরনো ম্যাচার (এরর এড়াতে রাখা হলো)
+export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  // ১. মুভি বনাম সিরিজ চেক
-  if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
-  if (!isMovie && cleanApi.includes('movie')) return false;
-
-  // ২. ডাইরেক্ট ম্যাচ
   if (cleanSearch === cleanApi) return true;
-  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) {
-      // 🎯 Bleach Fix: সার্চ লম্বা, কিন্তু API-তে ছোট নাম (যেমন Bleach) থাকলে ব্লক করব
-      if (cleanSearch.length > 12 && cleanApi.length < 10) return false;
-      return true;
-  }
-
-  // ৩. ফাজি ম্যাচ (Levenshtein)
+  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.25));
+  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
+  return distance <= maxAllowed;
+}
+
+// 🎯 নতুন স্ট্রিক্ট ম্যাচার (Season/Part ইগনোর করবে)
+export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
+  const cleanSearchFull = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanApiFull = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // মুভি বনাম সিরিজ চেক
+  if (isMovie && (cleanApiFull.includes('season') || cleanApiFull.includes('episode'))) return false;
+  if (!isMovie && cleanApiFull.includes('movie')) return false;
+
+  if (cleanSearchFull === cleanApiFull) return true;
+
+  // 🎯 Bleach Fix: সার্চ যদি লম্বা হয় (Bleach TYBW) কিন্তু API টাইটেল ছোট হয় (Bleach), তবে ব্লক করব
+  if (cleanSearchFull.length > 12 && cleanApiFull.length < 10) return false;
+
+  // 🎯 Season/Part বাদ দিয়ে মেইন নাম বের করা (JJK S2 ফিক্স)
+  const stripSeason = (s: string) => s.replace(/season\d+/g, '').replace(/\d+(?:st|nd|rd|th)season/g, '').replace(/part\d+/g, '').trim();
+  
+  const cleanSearchStripped = stripSeason(cleanSearchFull);
+  const cleanApiStripped = stripSeason(cleanApiFull);
+
+  if (cleanSearchStripped === cleanApiStripped) return true;
+  if (cleanApiStripped.includes(cleanSearchStripped) || cleanSearchStripped.includes(cleanApiStripped)) return true;
+
+  const distance = getLevenshteinDistance(cleanSearchStripped, cleanApiStripped);
+  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearchStripped.length, cleanApiStripped.length) * 0.25));
   return distance <= maxAllowed;
 }
