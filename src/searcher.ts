@@ -27,14 +27,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     let queries = [titleToUse, romajiToUse, rootTitle];
     
-    // 🎯 Bleach Fix: যদি prequelEpisodes > 0 হয় (মানে সিক্যুয়েল), তবে mainTitle ("Bleach") সার্চ করব না
-    if (mainTitle && (!aniMeta || aniMeta.prequelEpisodes === 0)) {
+    // 🎯 Frieren Fix: mainTitle ("Frieren") সবসময় সার্চ করবে, যদি সিজন ১ হয় বা prequel না থাকে
+    if (mainTitle && (!aniMeta || (aniMeta.prequelEpisodes || 0) === 0)) {
         queries.push(mainTitle);
     }
     
     const validQueries = queries.filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    // 🎯 Fully Parallel Search
     const searchPromises = validQueries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 10000),
