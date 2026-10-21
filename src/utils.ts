@@ -46,14 +46,25 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
+// 🎯 স্ট্রিক্ট টাইটেল ম্যাচ (Bleach 2004 ব্লক করতে)
+export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-  if (cleanSearch === cleanApi) return true;
-  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
+  // ১. মুভি বনাম সিরিজ চেক
+  if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
+  if (!isMovie && cleanApi.includes('movie')) return false;
 
+  // ২. ডাইরেক্ট ম্যাচ
+  if (cleanSearch === cleanApi) return true;
+  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) {
+      // 🎯 Bleach Fix: সার্চ লম্বা, কিন্তু API-তে ছোট নাম (যেমন Bleach) থাকলে ব্লক করব
+      if (cleanSearch.length > 12 && cleanApi.length < 10) return false;
+      return true;
+  }
+
+  // ৩. ফাজি ম্যাচ (Levenshtein)
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
+  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.25));
   return distance <= maxAllowed;
 }
