@@ -18,11 +18,27 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const episodeStr = input.episode.toString();
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
-    const extractionPromises = candidates.map(async (variant) => {
+    const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
+    candidates.forEach(cand => {
+        if (cand.provider === 'hindi') {
+            allVariants.push({ provider: 'hindi', slug: cand.rawSlug });
+        } else {
+            allVariants.push({ provider: 'desi', slug: cand.rawSlug });
+            if (userSeason === 2) {
+                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-2nd-season` });
+            } else if (userSeason > 1) {
+                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-season-${userSeason}` });
+            }
+        }
+    });
+
+    const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
+
+    const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
             if (variant.provider === 'hindi') {
-                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.rawSlug}`, 10000);
+                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
                 if (res.ok) {
                     const json = await res.json();
                     const serverObj = json?.data?.servers || {};
@@ -56,10 +72,9 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             } else {
                 if (input.is_movie) {
-                    // 🎯 মুভির জন্য Desi Fallback
-                    let watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.rawSlug}`, 10000);
+                    let watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}`, 10000);
                     if (!watchRes.ok) {
-                        const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.rawSlug}`, 10000);
+                        const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 10000);
                         if (infoRes.ok) {
                             const infoJson = await infoRes.json();
                             if (infoJson?.data?.episodes?.[0]?.id) {
@@ -79,7 +94,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 } else {
                     const epsToTry = isSeasonOne ? [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i) : [absoluteEpisode];
                     const watchPromises = epsToTry.map(epNum => 
-                        fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.rawSlug}-episode-${epNum}`, 10000)
+                        fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 10000)
                     );
                     
                     const watchResults = await Promise.allSettled(watchPromises);
@@ -88,6 +103,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             const watchJson = await wRes.value.json();
                             const responseTitle = watchJson?.data?.title || "";
                             const responseEpMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
+                            
                             if (responseEpMatch && parseInt(responseEpMatch[1], 10) !== input.episode && parseInt(responseEpMatch[1], 10) !== absoluteEpisode) {
                                 continue; 
                             }
@@ -103,7 +119,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
         } catch (e) {
-            console.error(`Extractor error on ${variant.provider} ${variant.rawSlug}:`, e);
+            console.error(`Extractor error on ${variant.provider} ${variant.slug}:`, e);
         }
         return servers;
     });
