@@ -32,16 +32,33 @@ export function isSequelTitle(title: string, romajiTitle?: string): boolean {
   return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part/i.test(combined);
 }
 
-// 🎯 Universal Strict Title Matcher
+export function getLevenshteinDistance(a: string, b: string): number {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
+}
+
 export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
 
-  // মুভি বনাম সিরিজ চেক
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
-  // 🎯 "2nd", "3rd" ইত্যাদি বাদ দেওয়া
   const stripSuffixes = (s: string) => s.replace(/\b\d+(st|nd|rd|th)\b/g, '');
   const sClean = stripSuffixes(cleanSearch);
   const aClean = stripSuffixes(cleanApi);
@@ -59,7 +76,6 @@ export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie:
   const isApiSequel = isSequelTitle(apiTitle);
   if (isSearchSequel && !isApiSequel) return false;
 
-  // যদি API-র টাইটেল ১ শব্দের হয় (যেমন "Frieren"), তবে সার্চের প্রথম শব্দের সাথে মিলতে হবে
   if (aWords.length === 1) {
       return sWords[0] === aWords[0];
   }
