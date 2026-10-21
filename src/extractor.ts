@@ -13,6 +13,11 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
     const userSeason = input.season || 1;
 
+    // Universal Regex (S02E01, S2E1)
+    const seasonStr = userSeason.toString();
+    const episodeStr = input.episode.toString();
+    const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}`, 'i');
+
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
     
     candidates.forEach(cand => {
@@ -27,7 +32,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
 
-    // Batch = 2
     for (let i = 0; i < uniqueVariants.length; i += 2) {
         const batch = uniqueVariants.slice(i, i + 2);
         
@@ -43,22 +47,32 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         ['filemoon', 'servabyss'].forEach(serverName => {
                             if (serverObj[serverName] && Array.isArray(serverObj[serverName])) {
                                 const list = serverObj[serverName];
+                                
                                 if (input.is_movie) {
                                     if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                                 } else {
-                                    // 🎯 কঠোর এপিসোড ম্যাচিং: শুধুমাত্র Absolute Episode (25) খুঁজবো
-                                    const matched = list.find((item: any) => {
-                                        const nums = String(item.name).match(/\d+/g) || [];
-                                        const numArray = nums.map((n: string) => parseInt(n, 10));
-                                        return numArray.includes(absoluteEpisode);
-                                    });
+                                    let matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
+                                    
+                                    if (!matched) {
+                                        matched = list.find((item: any) => {
+                                            const nums = String(item.name).match(/\d+/g) || [];
+                                            return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
+                                        });
+                                    }
+                                    
+                                    if (!matched) {
+                                        matched = list.find((item: any) => {
+                                            const nums = String(item.name).match(/\d+/g) || [];
+                                            return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
+                                        });
+                                    }
+
                                     if (matched) servers.push({ server: serverName, url: matched.url, source: 'tatakai' });
                                 }
                             }
                         });
                     }
                 } else {
-                    // Desi Logic
                     if (input.is_movie) {
                         const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 8000);
                         if (infoRes.ok) {
@@ -78,15 +92,12 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             }
                         }
                     } else {
-                        // 🎯 Desi-তে Absolute এবং User Episode দুটোই প্যারালালি চেক করবো (স্পিড বাড়াতে)
                         const epsToTry = [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i);
-                        
                         const watchPromises = epsToTry.map(epNum => 
                             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 8000)
                         );
                         
                         const watchResults = await Promise.allSettled(watchPromises);
-                        
                         for (const wRes of watchResults) {
                             if (wRes.status === 'fulfilled' && wRes.value.ok) {
                                 const watchJson = await wRes.value.json();
@@ -96,7 +107,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                         servers.push({ server: src.server, url: cleanIframeUrl(src.url), source: 'tatakai' });
                                     }
                                 });
-                                if (servers.length > 0) break; // একটি পেলে অন্যটা চেক করার দরকার নেই
+                                if (servers.length > 0) break;
                             }
                         }
                     }
@@ -116,8 +127,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
             }
         });
 
-        // Early Exit: ৫টি বা তার বেশি সার্ভার পেলে লুপ ব্রেক
-        if (finalServers.length >= 5) break; 
+        // Early Exit: ৩টি বা তার বেশি সার্ভার পেলে লুপ ব্রেক (স্পিড বাড়াতে)
+        if (finalServers.length >= 3) break; 
     }
     
     return finalServers;
