@@ -17,7 +17,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 শুধুমাত্র AniList থেকে পাওয়া এক্সাক্ট টাইটেল দিয়ে সার্চ করব (কোনো mainTitle guess নয়)
     const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
     const searchPromises = queries.map(async (query) => {
@@ -26,7 +25,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
         ]);
 
-        // Hindi Search
         if (hindiRes.status === 'fulfilled' && hindiRes.value.ok) {
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
@@ -37,14 +35,12 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             });
         }
 
-        // Desi Search
         if (desiRes.status === 'fulfilled' && desiRes.value.ok) {
             const data = await desiRes.value.json();
             const list = data?.data?.results || [];
             list.forEach((anime: any) => {
                 if (!strictTitleMatch(query, anime.title, input.is_movie)) return;
                 
-                // ফরম্যাট চেক (TV vs MOVIE)
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
 
