@@ -11,7 +11,7 @@ export interface Candidate {
 }
 
 export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
-    const candidates: Candidate[] = [];
+    let candidates: Candidate[] = [];
     
     const aniMeta = await getAniListMeta(input.anilist_id);
     
@@ -24,12 +24,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         .replace(/(?:entertainment district|mugen train|infinity castle|swordsmith village|hashira training)\s*arc/gi, '')
         .trim();
 
+    // ইউনিক কুয়েরি তৈরি (ডুপ্লিকেট বাদ দিয়ে)
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    for (const query of queries) {
+    // 🎯 Fully Parallel Search (সব কুয়েরি একসাথে)
+    const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
-            fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 8000),
-            fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000)
+            fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 10000),
+            fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
         ]);
 
         // Hindi Search
@@ -66,16 +68,17 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                     if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
                 }
 
-                // 🎯 Strict Season Filtering সরিয়ে দেওয়া হলো। এখন extractor নিজেই absolute & user episode ট্রাই করবে।
                 const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
             });
         }
+    });
 
-        if (candidates.length >= 4) break; 
-    }
+    await Promise.allSettled(searchPromises);
 
+    // ডুপ্লিকেট রিমুভ (কোনো লিমিট নেই, যা পাবো সব নিবো)
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
-    return Array.from(uniqueCandidates.values()).slice(0, 4);
+    
+    return Array.from(uniqueCandidates.values());
 }
