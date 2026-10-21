@@ -13,9 +13,11 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
     const userSeason = input.season || 1;
 
+    // 🎯 সিজন ১ বা মুভি কি না চেক
+    const isSeasonOne = !aniMeta || (aniMeta.prequelEpisodes || 0) === 0;
+
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
-    // 🎯 Strict Regex: S01E1 ম্যাচ করার সময় S01E10 ব্লক করবে (?!\d)
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
@@ -38,9 +40,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
-            // ==========================================
-            // 🎯 ১. HINDI DUBBED LOGIC
-            // ==========================================
             if (variant.provider === 'hindi') {
                 const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
                 if (res.ok) {
@@ -55,7 +54,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             } else {
                                 let matched = null;
                                 // Regex Match (শুধুমাত্র সিজন ১ বা মুভির জন্য)
-                                if (!aniMeta || aniMeta.prequelEpisodes === 0) {
+                                if (isSeasonOne) {
                                     matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
                                 }
                                 // Absolute Episode Match
@@ -65,8 +64,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
-                                // Direct Episode Match (শুধুমাত্র সিজন ১ এর জন্য, Bleach ব্লক করতে)
-                                if (!matched && (!aniMeta || aniMeta.prequelEpisodes === 0)) {
+                                // Direct Episode Match (শুধুমাত্র সিজন ১ বা মুভির জন্য)
+                                if (!matched && isSeasonOne) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
@@ -77,11 +76,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         }
                     });
                 }
-            } 
-            // ==========================================
-            // 🎯 ২. DESI DUB LOGIC (Direct Watch URL)
-            // ==========================================
-            else {
+            } else {
                 if (input.is_movie) {
                     const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}`, 10000);
                     if (watchRes.ok) {
@@ -94,7 +89,9 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         });
                     }
                 } else {
-                    const epsToTry = [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i);
+                    // 🎯 Desi Fix: সিজন ১ না হলে input.episode (1) ট্রাই করব না
+                    const epsToTry = isSeasonOne ? [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i) : [absoluteEpisode];
+                    
                     const watchPromises = epsToTry.map(epNum => 
                         fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 10000)
                     );
