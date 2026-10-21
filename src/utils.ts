@@ -46,41 +46,34 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-// 🎯 পুরনো ম্যাচার (এরর এড়াতে রাখা হলো)
-export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
-  const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (cleanSearch === cleanApi) return true;
-  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
-  const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
-  return distance <= maxAllowed;
-}
-
-// 🎯 নতুন স্ট্রিক্ট ম্যাচার (Season/Part ইগনোর করবে)
+// 🎯 Universal Strict Matcher (Bleach 2004 ব্লক করতে)
 export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
-  const cleanSearchFull = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cleanApiFull = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
 
-  // মুভি বনাম সিরিজ চেক
-  if (isMovie && (cleanApiFull.includes('season') || cleanApiFull.includes('episode'))) return false;
-  if (!isMovie && cleanApiFull.includes('movie')) return false;
+  if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
+  if (!isMovie && cleanApi.includes('movie')) return false;
 
-  if (cleanSearchFull === cleanApiFull) return true;
+  // স্টপ ওয়ার্ড (যেমন: the, of, a) এবং সংখ্যা বাদ দেওয়া
+  const stopWords = ['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'part', 'season', 'cour', 'arc', 'movie'];
+  const getKeywords = (str: string) => str.split(/\s+/).filter(w => w.length > 0 && !stopWords.includes(w) && !/^\d+$/.test(w));
 
-  // 🎯 Bleach Fix: সার্চ যদি লম্বা হয় (Bleach TYBW) কিন্তু API টাইটেল ছোট হয় (Bleach), তবে ব্লক করব
-  if (cleanSearchFull.length > 12 && cleanApiFull.length < 10) return false;
+  const searchWords = getKeywords(cleanSearch);
+  const apiWords = getKeywords(cleanApi);
 
-  // 🎯 Season/Part বাদ দিয়ে মেইন নাম বের করা (JJK S2 ফিক্স)
-  const stripSeason = (s: string) => s.replace(/season\d+/g, '').replace(/\d+(?:st|nd|rd|th)season/g, '').replace(/part\d+/g, '').trim();
-  
-  const cleanSearchStripped = stripSeason(cleanSearchFull);
-  const cleanApiStripped = stripSeason(cleanApiFull);
+  if (searchWords.length === 0 || apiWords.length === 0) return false;
 
-  if (cleanSearchStripped === cleanApiStripped) return true;
-  if (cleanApiStripped.includes(cleanSearchStripped) || cleanSearchStripped.includes(cleanApiStripped)) return true;
+  let matches = 0;
+  for (const sw of searchWords) {
+    if (apiWords.includes(sw)) matches++;
+  }
 
-  const distance = getLevenshteinDistance(cleanSearchStripped, cleanApiStripped);
-  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearchStripped.length, cleanApiStripped.length) * 0.25));
-  return distance <= maxAllowed;
+  // 🎯 রুল: সার্চের অন্তত ৭০% শব্দ API-তে থাকতে হবে (Bleach TYBW vs Bleach ব্লক করতে)
+  const searchMatchRatio = matches / searchWords.length;
+  if (searchMatchRatio < 0.7) return false;
+
+  // যদি API-তে খুব কম শব্দ থাকে (যেমন শুধু "Bleach"), তবে সেটা ব্লক করব (যদি সার্চে ৪+ শব্দ থাকে)
+  if (searchWords.length >= 4 && apiWords.length <= 1) return false;
+
+  return true;
 }
