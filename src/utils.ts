@@ -46,16 +46,14 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-// 🎯 Universal Title Matcher (Frieren এবং Bleach ফিক্স)
 export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  
-  if (cleanApi === cleanSearch) return true;
 
-  // Levenshtein Distance ব্যবহার করা হলো (includes বাদ দেওয়া হলো, যাতে Bleach 2004 ব্লক হয়)
+  if (cleanSearch === cleanApi) return true;
+  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
+
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  // টাইটেলের দৈর্ঘ্যের ওপর ভিত্তি করে ৩০% পর্যন্ত ডিফারেন্স অ্যালাউ করা হলো
-  const maxAllowed = Math.max(3, Math.floor(cleanSearch.length * 0.3));
+  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
   return distance <= maxAllowed;
 }
