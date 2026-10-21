@@ -19,15 +19,18 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
 
+    // 🎯 ১. রুট টাইটেল (Season, Arc বাদ দিয়ে)
     const rootTitle = titleToUse
         .replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+|part\s+\d+)/gi, '')
         .replace(/(?:entertainment district|mugen train|infinity castle|swordsmith village|hashira training)\s*arc/gi, '')
         .trim();
 
-    // ইউনিক কুয়েরি তৈরি (ডুপ্লিকেট বাদ দিয়ে)
-    const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    // 🎯 ২. মেইন টাইটেল (কোলন দিয়ে স্প্লিট করে প্রথম অংশ, যেমন "Demon Slayer")
+    const mainTitle = titleToUse.split(':')[0].trim();
 
-    // 🎯 Fully Parallel Search (সব কুয়েরি একসাথে)
+    const queries = [titleToUse, romajiToUse, rootTitle, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+
+    // Fully Parallel Search
     const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 10000),
@@ -76,7 +79,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     await Promise.allSettled(searchPromises);
 
-    // ডুপ্লিকেট রিমুভ (কোনো লিমিট নেই, যা পাবো সব নিবো)
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
     
