@@ -2,7 +2,13 @@ export async function fetchWithTimeout(url: string, timeoutMs: number = 15000): 
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { signal: controller.signal });
+    return await fetch(url, { 
+        signal: controller.signal,
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        }
+    });
   } finally {
     clearTimeout(id);
   }
@@ -49,11 +55,12 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+// 🎯 Strict Title Match (Bleach 2004 ব্লক করতে)
 export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
+  
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.min(4, Math.floor(cleanSearch.length * 0.3));
+  const maxAllowed = Math.max(3, Math.floor(cleanSearch.length * 0.25)); 
   return distance <= maxAllowed;
 }
