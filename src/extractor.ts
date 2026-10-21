@@ -15,7 +15,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
-    // 🎯 FIX 1: রেজেক্সের শেষে (?!\d) যোগ করা হলো, যাতে S01E1 ম্যাচ করার সময় S01E10 না ধরে
+    // Regex for S02E01 (strict boundary, যাতে S02E10 না ধরে)
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
@@ -35,9 +35,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
 
+    // 🚀 TURBO MODE (Parallel Fetch)
     const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
+            // ==========================================
+            // 🎯 ১. HINDI DUBBED LOGIC
+            // ==========================================
             if (variant.provider === 'hindi') {
                 const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
                 if (res.ok) {
@@ -59,8 +63,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
-                                // 🎯 FIX 2: Direct Episode Match শুধুমাত্র তখনই হবে যখন prequelEpisodes = 0 (মানে সিজন ১)
-                                if (!matched && (aniMeta?.prequelEpisodes === 0 || userSeason === 1)) {
+                                // 🎯 ৩. Direct Episode Match (শুধুমাত্র সিজন ১ বা মুভির জন্য, সিক্যুয়েলে নয়)
+                                if (!matched && (!aniMeta || aniMeta.prequelEpisodes === 0)) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
@@ -71,44 +75,39 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         }
                     });
                 }
-            } else {
-                // Desi Logic (আগের মতোই)
-                const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 10000);
-                if (infoRes.ok) {
-                    const infoJson = await infoRes.json();
-                    const episodes = infoJson?.data?.episodes || [];
-                    
-                    if (episodes.length > 0) {
-                        let targetEpId = null;
-                        
-                        if (input.is_movie) {
-                            targetEpId = episodes[0].id;
-                        } else {
-                            const foundEp = episodes.find((e: any) => {
-                                let idEpNum = -1;
-                                if (e.id) {
-                                    const idMatch = String(e.id).match(/episode-(\d+)/i);
-                                    if (idMatch) idEpNum = parseInt(idMatch[1], 10);
-                                }
-                                if (Number(e.number) === absoluteEpisode || idEpNum === absoluteEpisode) return true;
-                                if ((aniMeta?.prequelEpisodes === 0 || userSeason === 1) && (Number(e.number) === input.episode || idEpNum === input.episode)) return true;
-                                return false;
-                            });
-
-                            if (foundEp) targetEpId = foundEp.id;
-                        }
-                        
-                        if (targetEpId) {
-                            const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 10000);
-                            if (watchRes.ok) {
-                                const watchJson = await watchRes.json();
-                                const sources = watchJson?.data?.sources || [];
-                                sources.forEach((src: any) => {
-                                    if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
-                                        servers.push({ server: src.server, url: cleanIframeUrl(src.url), source: 'tatakai' });
-                                    }
-                                });
+            } 
+            // ==========================================
+            // 🎯 ২. DESI DUB LOGIC (Direct Watch URL)
+            // ==========================================
+            else {
+                if (input.is_movie) {
+                    const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}`, 10000);
+                    if (watchRes.ok) {
+                        const watchJson = await watchRes.json();
+                        const sources = watchJson?.data?.sources || [];
+                        sources.forEach((src: any) => {
+                            if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
+                                servers.push({ server: src.server, url: cleanIframeUrl(src.url), source: 'tatakai' });
                             }
+                        });
+                    }
+                } else {
+                    const epsToTry = [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i);
+                    const watchPromises = epsToTry.map(epNum => 
+                        fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 10000)
+                    );
+                    
+                    const watchResults = await Promise.allSettled(watchPromises);
+                    for (const wRes of watchResults) {
+                        if (wRes.status === 'fulfilled' && wRes.value.ok) {
+                            const watchJson = await wRes.value.json();
+                            const sources = watchJson?.data?.sources || [];
+                            sources.forEach((src: any) => {
+                                if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
+                                    servers.push({ server: src.server, url: cleanIframeUrl(src.url), source: 'tatakai' });
+                                }
+                            });
+                            if (servers.length > 0) break; // পেলে ব্রেক
                         }
                     }
                 }
