@@ -15,7 +15,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
-    const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}`, 'i');
+    // 🎯 FIX 1: রেজেক্সের শেষে (?!\d) যোগ করা হলো, যাতে S01E1 ম্যাচ করার সময় S01E10 না ধরে
+    const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
     
@@ -37,9 +38,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
-            // ==========================================
-            // 🎯 ১. HINDI DUBBED LOGIC
-            // ==========================================
             if (variant.provider === 'hindi') {
                 const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
                 if (res.ok) {
@@ -52,19 +50,29 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             if (input.is_movie) {
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
+                                // ১. URL Regex Match
                                 let matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
-                                if (!matched) matched = list.find((item: any) => (String(item.name).match(/\d+/g) || []).map((n: string) => parseInt(n, 10)).includes(absoluteEpisode));
-                                if (!matched) matched = list.find((item: any) => (String(item.name).match(/\d+/g) || []).map((n: string) => parseInt(n, 10)).includes(input.episode));
+                                // ২. Absolute Episode Match
+                                if (!matched) {
+                                    matched = list.find((item: any) => {
+                                        const nums = String(item.name).match(/\d+/g) || [];
+                                        return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
+                                    });
+                                }
+                                // 🎯 FIX 2: Direct Episode Match শুধুমাত্র তখনই হবে যখন prequelEpisodes = 0 (মানে সিজন ১)
+                                if (!matched && (aniMeta?.prequelEpisodes === 0 || userSeason === 1)) {
+                                    matched = list.find((item: any) => {
+                                        const nums = String(item.name).match(/\d+/g) || [];
+                                        return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
+                                    });
+                                }
                                 if (matched) servers.push({ server: serverName, url: matched.url, source: 'tatakai' });
                             }
                         }
                     });
                 }
-            } 
-            // ==========================================
-            // 🎯 ২. DESI DUB LOGIC (Fetch Info First for Exact ID)
-            // ==========================================
-            else {
+            } else {
+                // Desi Logic (আগের মতোই)
                 const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 10000);
                 if (infoRes.ok) {
                     const infoJson = await infoRes.json();
@@ -76,16 +84,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         if (input.is_movie) {
                             targetEpId = episodes[0].id;
                         } else {
-                            // 🎯 অ্যারে থেকে একদম সঠিক এপিসোড আইডি খোঁজা
                             const foundEp = episodes.find((e: any) => {
                                 let idEpNum = -1;
                                 if (e.id) {
                                     const idMatch = String(e.id).match(/episode-(\d+)/i);
                                     if (idMatch) idEpNum = parseInt(idMatch[1], 10);
                                 }
-                                // Absolute Episode (যেমন 27) অথবা User Episode (যেমন 1) ম্যাচ
                                 if (Number(e.number) === absoluteEpisode || idEpNum === absoluteEpisode) return true;
-                                if (Number(e.number) === input.episode || idEpNum === input.episode) return true;
+                                if ((aniMeta?.prequelEpisodes === 0 || userSeason === 1) && (Number(e.number) === input.episode || idEpNum === input.episode)) return true;
                                 return false;
                             });
 
