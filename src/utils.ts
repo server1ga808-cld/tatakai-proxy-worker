@@ -26,7 +26,6 @@ export function cleanIframeUrl(htmlString: string): string {
   return htmlString;
 }
 
-// 🎯 সিক্যুয়েল কি না চেক (Bleach TYBW বা S2+ হলে true)
 export function isSequelTitle(title: string, romajiTitle?: string): boolean {
   const combined = `${title} ${romajiTitle || ''}`.toLowerCase();
   return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part/i.test(combined);
@@ -71,7 +70,6 @@ export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie:
 
   if (sWords.length === 0 || aWords.length === 0) return false;
 
-  // 🎯 Bleach 2004 ব্লক করার মেইন লজিক
   const isSearchSequel = isSequelTitle(searchTitle);
   const isApiSequel = isSequelTitle(apiTitle);
   if (isSearchSequel && !isApiSequel) return false;
