@@ -6,7 +6,7 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 export interface Candidate {
     provider: 'hindi' | 'desi';
-    slug: string;
+    rawSlug: string;
     baseName: string;
 }
 
@@ -18,10 +18,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     const userSeason = input.season || 1;
-    const absoluteSeason = userSeason + (aniMeta?.seasonsBefore || 0);
     const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
 
-    const rootTitle = titleToUse.replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+)/gi, '').trim();
+    // রুট টাইটেল (সিজন/আর্ক নাম বাদ দিয়ে)
+    const rootTitle = titleToUse.replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+|part\s+\d+)/gi, '').trim();
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
     for (const query of queries) {
@@ -36,11 +36,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
                 if (isTitleMatch(query, anime.title)) {
-                    candidates.push({ 
-                        provider: 'hindi', 
-                        slug: anime.slug, 
-                        baseName: anime.slug.replace(/-season-\d+$/, '') 
-                    });
+                    // Base Name বের করা (যেমন: jujutsu-kaisen-season-2 -> jujutsu-kaisen)
+                    const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                    candidates.push({ provider: 'hindi', rawSlug: anime.slug, baseName });
                 }
             });
         }
@@ -52,38 +50,23 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             list.forEach((anime: any) => {
                 if (!isTitleMatch(query, anime.title)) return;
 
+                // Strict Format Filtering
                 if (targetFormat === 'MOVIE' && anime.type !== 'MOVIE') return;
                 if (targetFormat !== 'MOVIE' && anime.type === 'MOVIE') return;
 
-                const apiTitle = anime.title.toLowerCase();
-                const slug = anime.id.toLowerCase();
-                const seasonMatch = apiTitle.match(/(?:season|s)\s*(\d+)/i) || slug.match(/(?:season|s)[\s-]*(\d+)/i) || apiTitle.match(/(\d+)(?:st|nd|rd|th)\s*season/i);
-
-                if (seasonMatch) {
-                    const apiSeason = parseInt(seasonMatch[1], 10);
-                    if (apiSeason !== userSeason && apiSeason !== absoluteSeason) return;
-                } else if (userSeason > 1) {
-                    return;
-                }
-
-                candidates.push({ 
-                    provider: 'desi', 
-                    slug: anime.id, 
-                    baseName: anime.id.replace(/-season-\d+$/, '').replace(/-2nd-season$/, '') 
-                });
+                // Base Name বের করা
+                const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
             });
         }
+
+        // যদি রেজাল্ট পাওয়া যায়, তবে লুপ ব্রেক
+        if (candidates.length > 0) break;
     }
 
-    // 🎯 Strict Deduplication (Base Name + Provider)
+    // ডুপ্লিকেট রিমুভ
     const uniqueCandidates = new Map();
-    candidates.forEach(c => {
-        const key = `${c.provider}-${c.baseName}`;
-        // যদি আগে থেকে থাকে, তবে শুধু তাকেই রাখবো (যাতে S1, S2, S3 একসাথে না আসে)
-        if (!uniqueCandidates.has(key)) {
-            uniqueCandidates.set(key, c);
-        }
-    });
+    candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
     
-    return Array.from(uniqueCandidates.values());
+    return Array.from(uniqueCandidates.values()).slice(0, 4);
 }
