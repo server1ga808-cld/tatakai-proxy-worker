@@ -26,7 +26,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     const queries = [titleToUse, romajiToUse, rootTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    const searchPromises = queries.map(async (query) => {
+    // 🎯 Sequential Search (Render API বাঁচাতে)
+    for (const query of queries) {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 8000),
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000)
@@ -38,19 +39,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
                 if (!isTitleMatch(query, anime.title)) return;
-
-                // Strict Movie Filter
                 if (input.is_movie) {
                     const cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
                     const cleanApi = anime.title.toLowerCase().replace(/[^a-z0-9]/g, '');
                     if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
                     if (getLevenshteinDistance(cleanQuery, cleanApi) > 4) return;
                 } else {
-                    const cleanApi = anime.title.toLowerCase();
-                    if (cleanApi.includes('movie') || cleanApi.includes('film')) return;
+                    if (anime.title.toLowerCase().includes('movie')) return;
                 }
-
-                const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'hindi', rawSlug: anime.slug, baseName });
             });
         }
@@ -70,16 +67,16 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                     if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
                 }
 
-                const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '').replace(/-\d+(?:st|nd|rd|th)-season$/, '');
+                const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
             });
         }
-    });
 
-    await Promise.allSettled(searchPromises);
+        // 🎯 যদি অন্তত ২টি ক্যান্ডিডেট পেয়ে যাই, তবে পরের টাইটেল সার্চ করার দরকার নেই (Render API বাঁচাতে)
+        if (candidates.length >= 2) break;
+    }
 
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
-    
-    return Array.from(uniqueCandidates.values()).slice(0, 4);
+    return Array.from(uniqueCandidates.values()).slice(0, 3); // সর্বোচ্চ ৩টি স্লাগ
 }
