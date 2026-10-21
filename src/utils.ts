@@ -26,15 +26,6 @@ export function cleanIframeUrl(htmlString: string): string {
   return htmlString;
 }
 
-export function matchEpisodeNumber(nameStr: string, targetEp: number): boolean {
-  if (!nameStr) return false;
-  const match = nameStr.match(/\d+/);
-  if (match) {
-    return parseInt(match[0], 10) === targetEp;
-  }
-  return false;
-}
-
 export function getLevenshteinDistance(a: string, b: string): number {
   const matrix = [];
   for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -55,12 +46,16 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
-// 🎯 Strict Title Match (Bleach 2004 ব্লক করতে)
+// 🎯 Universal Title Matcher (Frieren এবং Bleach ফিক্স)
 export function isTitleMatch(searchTitle: string, apiTitle: string): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
   
+  if (cleanApi === cleanSearch) return true;
+
+  // Levenshtein Distance ব্যবহার করা হলো (includes বাদ দেওয়া হলো, যাতে Bleach 2004 ব্লক হয়)
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.max(3, Math.floor(cleanSearch.length * 0.25)); 
+  // টাইটেলের দৈর্ঘ্যের ওপর ভিত্তি করে ৩০% পর্যন্ত ডিফারেন্স অ্যালাউ করা হলো
+  const maxAllowed = Math.max(3, Math.floor(cleanSearch.length * 0.3));
   return distance <= maxAllowed;
 }
