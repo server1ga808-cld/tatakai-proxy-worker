@@ -1,4 +1,4 @@
-import { fetchWithTimeout, isTitleMatch, getLevenshteinDistance } from './utils';
+import { fetchWithTimeout, strictTitleMatch } from './utils';
 import { ProxyInput } from './types';
 import { getAniListMeta } from './anilist';
 
@@ -16,25 +16,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const aniMeta = await getAniListMeta(input.anilist_id);
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
-    const targetFormat = aniMeta?.format || (input.is_movie ? 'MOVIE' : 'TV');
-
-    const rootTitle = titleToUse
-        .replace(/(?:\d+(?:st|nd|rd|th)?\s+season|season\s+\d+|part\s+\d+)/gi, '')
-        .replace(/(?:entertainment district|mugen train|infinity castle|swordsmith village|hashira training)\s*arc/gi, '')
-        .trim();
-
-    const mainTitle = titleToUse.split(':')[0].trim();
-
-    let queries = [titleToUse, romajiToUse, rootTitle];
     
-    // 🎯 Frieren Fix: mainTitle ("Frieren") সবসময় সার্চ করবে, যদি সিজন ১ হয় বা prequel না থাকে
-    if (mainTitle && (!aniMeta || (aniMeta.prequelEpisodes || 0) === 0)) {
-        queries.push(mainTitle);
-    }
-    
-    const validQueries = queries.filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    // 🎯 শুধুমাত্র AniList থেকে পাওয়া এক্সাক্ট টাইটেল দিয়ে সার্চ করব (কোনো mainTitle guess নয়)
+    const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    const searchPromises = validQueries.map(async (query) => {
+    const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/search?title=${encodeURIComponent(query)}`, 10000),
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
@@ -45,15 +31,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
             list.forEach((anime: any) => {
-                if (!isTitleMatch(query, anime.title)) return;
-                if (input.is_movie) {
-                    const cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    const cleanApi = anime.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
-                    if (getLevenshteinDistance(cleanQuery, cleanApi) > 4) return;
-                } else {
-                    if (anime.title.toLowerCase().includes('movie')) return;
-                }
+                if (!strictTitleMatch(query, anime.title, input.is_movie)) return;
                 const baseName = anime.slug.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'hindi', rawSlug: anime.slug, baseName });
             });
@@ -64,15 +42,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const data = await desiRes.value.json();
             const list = data?.data?.results || [];
             list.forEach((anime: any) => {
-                if (!isTitleMatch(query, anime.title)) return;
-                if (targetFormat === 'MOVIE' && anime.type !== 'MOVIE') return;
-                if (targetFormat !== 'MOVIE' && anime.type === 'MOVIE') return;
-
-                if (input.is_movie) {
-                    const cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    const cleanApi = anime.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-                    if (/\d/.test(cleanQuery) && !/\d/.test(cleanApi)) return;
-                }
+                if (!strictTitleMatch(query, anime.title, input.is_movie)) return;
+                
+                // ফরম্যাট চেক (TV vs MOVIE)
+                if (input.is_movie && anime.type !== 'MOVIE') return;
+                if (!input.is_movie && anime.type === 'MOVIE') return;
 
                 const baseName = anime.id.replace(/-season-\d+$/, '').replace(/-s\d+$/, '');
                 candidates.push({ provider: 'desi', rawSlug: anime.id, baseName });
