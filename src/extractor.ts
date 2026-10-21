@@ -11,37 +11,21 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     
     const aniMeta = await getAniListMeta(input.anilist_id);
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
+    const isSeasonOne = !aniMeta || aniMeta.prequelEpisodes === 0;
     const userSeason = input.season || 1;
-
-    // 🎯 সিজন ১ বা মুভি কি না চেক
-    const isSeasonOne = !aniMeta || (aniMeta.prequelEpisodes || 0) === 0;
 
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
-    const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
-    
-    candidates.forEach(cand => {
-        if (cand.provider === 'hindi') {
-            allVariants.push({ provider: 'hindi', slug: cand.rawSlug });
-        } else {
-            allVariants.push({ provider: 'desi', slug: cand.rawSlug });
-            if (userSeason === 2) {
-                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-2nd-season` });
-            } else if (userSeason > 1) {
-                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-season-${userSeason}` });
-            }
-        }
-    });
-
-    const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
-
-    const extractionPromises = uniqueVariants.map(async (variant) => {
+    const extractionPromises = candidates.map(async (variant) => {
         let servers: any[] = [];
         try {
+            // ==========================================
+            // 🎯 ১. HINDI DUBBED LOGIC
+            // ==========================================
             if (variant.provider === 'hindi') {
-                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
+                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.rawSlug}`, 10000);
                 if (res.ok) {
                     const json = await res.json();
                     const serverObj = json?.data?.servers || {};
@@ -53,18 +37,18 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
                                 let matched = null;
-                                // Regex Match (শুধুমাত্র সিজন ১ বা মুভির জন্য)
+                                // ১. URL Regex Match (শুধুমাত্র সিজন ১ হলে)
                                 if (isSeasonOne) {
                                     matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
                                 }
-                                // Absolute Episode Match
+                                // ২. Absolute Episode Match
                                 if (!matched) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
-                                // Direct Episode Match (শুধুমাত্র সিজন ১ বা মুভির জন্য)
+                                // ৩. Direct Episode Match (শুধুমাত্র সিজন ১ হলে, Bleach ব্লক করতে)
                                 if (!matched && isSeasonOne) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
@@ -76,9 +60,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         }
                     });
                 }
-            } else {
+            } 
+            // ==========================================
+            // 🎯 ২. DESI DUB LOGIC (Strict Title Verification)
+            // ==========================================
+            else {
                 if (input.is_movie) {
-                    const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}`, 10000);
+                    const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.rawSlug}`, 10000);
                     if (watchRes.ok) {
                         const watchJson = await watchRes.json();
                         const sources = watchJson?.data?.sources || [];
@@ -89,17 +77,24 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         });
                     }
                 } else {
-                    // 🎯 Desi Fix: সিজন ১ না হলে input.episode (1) ট্রাই করব না
                     const epsToTry = isSeasonOne ? [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i) : [absoluteEpisode];
                     
                     const watchPromises = epsToTry.map(epNum => 
-                        fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 10000)
+                        fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.rawSlug}-episode-${epNum}`, 10000)
                     );
                     
                     const watchResults = await Promise.allSettled(watchPromises);
                     for (const wRes of watchResults) {
                         if (wRes.status === 'fulfilled' && wRes.value.ok) {
                             const watchJson = await wRes.value.json();
+                            
+                            // 🎯 Desi Verification: রেসপন্সের Title-এ এপিসোড নাম্বার ম্যাচ করছে কি না চেক
+                            const responseTitle = watchJson?.data?.title || "";
+                            const responseEpMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
+                            if (responseEpMatch && parseInt(responseEpMatch[1], 10) !== input.episode && parseInt(responseEpMatch[1], 10) !== absoluteEpisode) {
+                                continue; // ভুল এপিসোড, স্কিপ
+                            }
+
                             const sources = watchJson?.data?.sources || [];
                             sources.forEach((src: any) => {
                                 if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
@@ -112,7 +107,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
         } catch (e) {
-            console.error(`Extractor error on ${variant.provider} ${variant.slug}:`, e);
+            console.error(`Extractor error on ${variant.provider} ${variant.rawSlug}:`, e);
         }
         return servers;
     });
