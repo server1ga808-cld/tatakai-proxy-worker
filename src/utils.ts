@@ -52,37 +52,24 @@ export function getLevenshteinDistance(a: string, b: string): number {
 }
 
 export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
-  const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
-  const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
-  const stripSuffixes = (s: string) => s.replace(/\b\d+(st|nd|rd|th)\b/g, '');
-  const sClean = stripSuffixes(cleanSearch);
-  const aClean = stripSuffixes(cleanApi);
-
-  const stopWords = ['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'part', 'season', 'cour', 'arc', 'movie', 'hen'];
-  const getKeywords = (str: string) => str.split(/\s+/).filter(w => w.length > 0 && !stopWords.includes(w) && !/^\d+$/.test(w));
-
-  const sWords = getKeywords(sClean);
-  const aWords = getKeywords(aClean);
-
-  if (sWords.length === 0 || aWords.length === 0) return false;
-
   const isSearchSequel = isSequelTitle(searchTitle);
   const isApiSequel = isSequelTitle(apiTitle);
   
-  // 🎯 ইউনিভার্সাল সিক্যুয়েল ব্লকার: সার্চ সিক্যুয়েল হলে, API-ও সিক্যুয়েল হতে হবে
+  // 🎯 সিক্যুয়েল ব্লকার
   if (isSearchSequel && !isApiSequel) return false;
+  if (!isSearchSequel && isApiSequel) return false;
 
-  if (aWords.length === 1) {
-      return sWords[0] === aWords[0];
-  }
+  // 🎯 Frieren এবং অন্যান্য অ্যানিমের জন্য সরাসরি ম্যাচ
+  if (cleanSearch === cleanApi) return true;
+  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
 
-  let matches = 0;
-  for (const sw of sWords) {
-    if (aWords.includes(sw)) matches++;
-  }
-  return (matches / sWords.length) >= 0.5; 
+  const distance = getLevenshteinDistance(cleanSearch, cleanApi);
+  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
+  return distance <= maxAllowed;
 }
