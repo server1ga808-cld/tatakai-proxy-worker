@@ -7,7 +7,8 @@ export interface AniListMeta {
     romajiTitle: string;
     year: number;
     seasonsBefore: number;
-    prequelEpisodes: number; // আগের সব সিজনের মোট এপিসোড
+    prequelEpisodes: number;
+    prequelYear: number; // 🎯 নতুন: আগের সিজনের বছর
 }
 
 async function fetchMedia(id: number) {
@@ -62,12 +63,12 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
 
     let seasonsBefore = 0;
     let prequelEpisodes = 0;
+    let prequelYear = 0;
     let currentMedia = media;
     let visited = new Set<number>();
     visited.add(anilistId);
 
-    // Prequel Chain Analysis
-    for (let depth = 0; depth < 5; depth++) {
+    for (let depth = 0; depth < 10; depth++) {
         const prequels = currentMedia.relations?.edges?.filter(
             (e: any) => e.relationType === 'PREQUEL' && e.node.format === 'TV'
         ) || [];
@@ -79,7 +80,12 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         if (bestPrequel && !visited.has(bestPrequel.node.id)) {
             visited.add(bestPrequel.node.id);
             seasonsBefore++;
-            prequelEpisodes += (bestPrequel.node.episodes || 0); // আগের সিজনের এপিসোড যোগ
+            prequelEpisodes += (bestPrequel.node.episodes || 0);
+            
+            // 🎯 প্রথম প্রিকুয়েলের বছর সেভ করে রাখছি
+            if (prequelYear === 0) {
+                prequelYear = bestPrequel.node.startDate?.year || 0;
+            }
             
             const prequelMedia = await fetchMedia(bestPrequel.node.id);
             if (!prequelMedia) break;
@@ -95,7 +101,8 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         romajiTitle: media.title?.romaji || '',
         year: media.startDate?.year || media.seasonYear || 0,
         seasonsBefore,
-        prequelEpisodes
+        prequelEpisodes,
+        prequelYear
     };
 
     cache.set(anilistId, { data: meta, expiry: now + 5 * 60 * 1000 });
