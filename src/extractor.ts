@@ -106,7 +106,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     if (foundEp) {
                         targetEpId = foundEp.id;
                     } else {
-                        // ডাইনামিক বেস নাম এক্সট্রাকশন
+                        // ডাইনামিক বেস নাম এক্সট্রাকশন (র‍্যান্ডম স্লাগ থেকে আসল নাম)
                         let realBaseName = null;
                         if (episodes.length > 0 && episodes[0].id) {
                             const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
