@@ -57,5 +57,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
     
-    return Array.from(uniqueCandidates.values());
+    // 🎯 ফাস্ট রেসপন্সের জন্য শুধু প্রথম সঠিক স্লাগটা নিবো (Hindi এবং Desi)
+    const finalCandidates: Candidate[] = [];
+    const hindiCand = Array.from(uniqueCandidates.values()).find(c => c.provider === 'hindi');
+    const desiCand = Array.from(uniqueCandidates.values()).find(c => c.provider === 'desi');
+    
+    if (hindiCand) finalCandidates.push(hindiCand);
+    if (desiCand) finalCandidates.push(desiCand);
+
+    return finalCandidates;
 }
