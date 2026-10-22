@@ -58,14 +58,6 @@ export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie:
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
-  const isSearchSequel = isSequelTitle(searchTitle);
-  const isApiSequel = isSequelTitle(apiTitle);
-  
-  // 🎯 সিক্যুয়েল ব্লকার
-  if (isSearchSequel && !isApiSequel) return false;
-  if (!isSearchSequel && isApiSequel) return false;
-
-  // 🎯 Frieren এবং অন্যান্য অ্যানিমের জন্য সরাসরি ম্যাচ
   if (cleanSearch === cleanApi) return true;
   if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
 
