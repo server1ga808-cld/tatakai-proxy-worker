@@ -58,9 +58,11 @@ export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie:
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
+  // 🎯 সরাসরি ম্যাচ বা সাবস্ট্রিং ম্যাচ
   if (cleanSearch === cleanApi) return true;
   if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
 
+  // 🎯 লেভেনশটাইন ডিস্ট্যান্স
   const distance = getLevenshteinDistance(cleanSearch, cleanApi);
   const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
   return distance <= maxAllowed;
