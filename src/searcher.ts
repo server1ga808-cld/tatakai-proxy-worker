@@ -17,7 +17,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 গেস করা বন্ধ। শুধু exact title দিয়ে সার্চ হবে।
     const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
     const searchPromises = queries.map(async (query) => {
@@ -26,6 +25,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 10000)
         ]);
 
+        // Hindi Search
         if (hindiRes.status === 'fulfilled' && hindiRes.value.ok) {
             const data = await hindiRes.value.json();
             const list = data?.data?.animeList || [];
@@ -36,6 +36,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             });
         }
 
+        // Desi Search
         if (desiRes.status === 'fulfilled' && desiRes.value.ok) {
             const data = await desiRes.value.json();
             const list = data?.data?.results || [];
