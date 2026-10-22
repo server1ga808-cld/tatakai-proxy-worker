@@ -17,7 +17,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    // 🎯 mainTitle (যেমন: Frieren)
+    const mainTitle = titleToUse.split(':')[0].trim();
+    const queries = [titleToUse, romajiToUse, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
     const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
@@ -52,9 +54,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     await Promise.allSettled(searchPromises);
 
+    // ডুপ্লিকেট রিমুভ
     const uniqueCandidates = new Map();
     candidates.forEach(c => uniqueCandidates.set(c.provider + '-' + c.rawSlug, c));
     
-    // সর্বোচ্চ ৬টি ক্যান্ডিডেট নেবে, যাতে কোনো একটা ফেইল করলে অন্যটা চেষ্টা করা যায়
+    // সব ক্যান্ডিডেট ফেরত দেবে (ফাস্ট রেসপন্সের জন্য ৬টি)
     return Array.from(uniqueCandidates.values()).slice(0, 6);
 }
