@@ -8,7 +8,7 @@ export interface AniListMeta {
     year: number;
     seasonsBefore: number;
     prequelEpisodes: number;
-    prequelYear: number; // 🎯 নতুন: আগের সিজনের বছর
+    prequelYear: number;
 }
 
 async function fetchMedia(id: number) {
@@ -82,7 +82,6 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
             seasonsBefore++;
             prequelEpisodes += (bestPrequel.node.episodes || 0);
             
-            // 🎯 প্রথম প্রিকুয়েলের বছর সেভ করে রাখছি
             if (prequelYear === 0) {
                 prequelYear = bestPrequel.node.startDate?.year || 0;
             }
