@@ -10,39 +10,25 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    
     const isSequel = isSequelTitle(input.title, input.romaji_title);
-    const isSeasonOne = !isSequel && (!aniMeta || aniMeta.prequelEpisodes === 0);
-    
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
-    const userSeason = input.season || 1;
     const prequelYearStr = aniMeta?.prequelYear ? String(aniMeta.prequelYear) : "";
+    
+    const isAniListFailed = !aniMeta;
+    const isSeasonOne = !isSequel && (!aniMeta || aniMeta.prequelEpisodes === 0);
 
-    const seasonStr = userSeason.toString();
+    const seasonStr = (input.season || 1).toString();
     const episodeStr = input.episode.toString();
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
-    const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
-    candidates.forEach(cand => {
-        if (cand.provider === 'hindi') {
-            allVariants.push({ provider: 'hindi', slug: cand.rawSlug });
-        } else {
-            allVariants.push({ provider: 'desi', slug: cand.rawSlug });
-            if (userSeason === 2) {
-                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-2nd-season` });
-            } else if (userSeason > 1) {
-                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-season-${userSeason}` });
-            }
-        }
-    });
-
-    const uniqueVariants = Array.from(new Map(allVariants.map(v => [v.provider + '-' + v.slug, v])).values());
-
-    const extractionPromises = uniqueVariants.map(async (variant) => {
+    const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            if (variant.provider === 'hindi') {
-                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
+            // ==========================================
+            // 🎯 ১. HINDI DUBBED LOGIC
+            // ==========================================
+            if (cand.provider === 'hindi') {
+                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${cand.rawSlug}`, 10000);
                 if (res.ok) {
                     const json = await res.json();
                     const serverObj = json?.data?.servers || {};
@@ -53,7 +39,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             if (input.is_movie) {
                                 if (list.length > 0) {
                                     const link = list[0].url;
-                                    // 🎯 ইউনিভার্সাল মুভি ব্লক
                                     if (!(isSequel && prequelYearStr && link.includes(prequelYearStr))) {
                                         servers.push({ server: serverName, url: link, source: 'tatakai' });
                                     }
@@ -61,15 +46,15 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             } else {
                                 let matched = null;
                                 
-                                // ১. Absolute Episode Match
-                                if (absoluteEpisode > 0) {
+                                // ১. Absolute Episode Match (যেমন 367)
+                                if (!isAniListFailed) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
                                 
-                                // ২. Direct Episode Match
+                                // ২. Direct Episode Match (যদি Absolute না পায় বা AniList ফেইল করে)
                                 if (!matched) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
@@ -82,7 +67,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                     matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
                                 }
                                 
-                                // 🎯 ৪. ইউনিভার্সাল সেফটি নেট: প্রিকুয়েলের বছর থাকলে ব্লক
+                                // 🎯 ইউনিভার্সাল সেফটি নেট: Bleach TYBW-এর জন্য ২০০৪ লিংক ব্লক
                                 if (matched && isSequel && prequelYearStr && matched.url.includes(prequelYearStr)) {
                                     matched = null; 
                                 }
@@ -92,8 +77,12 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         }
                     });
                 }
-            } else {
-                const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 10000);
+            } 
+            // ==========================================
+            // 🎯 ২. DESI DUB LOGIC
+            // ==========================================
+            else {
+                const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${cand.rawSlug}`, 10000);
                 if (!infoRes.ok) return servers;
 
                 const infoJson = await infoRes.json();
@@ -117,6 +106,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     if (foundEp) {
                         targetEpId = foundEp.id;
                     } else {
+                        // ডাইনামিক বেস নাম এক্সট্রাকশন
                         let realBaseName = null;
                         if (episodes.length > 0 && episodes[0].id) {
                             const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
@@ -161,7 +151,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
         } catch (e) {
-            console.error(`Extractor error on ${variant.provider} ${variant.slug}:`, e);
+            console.error(`Extractor error on ${cand.provider} ${cand.rawSlug}:`, e);
         }
         return servers;
     });
