@@ -10,11 +10,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
+    
     const isSequel = isSequelTitle(input.title, input.romaji_title);
     const isSeasonOne = !isSequel && (!aniMeta || aniMeta.prequelEpisodes === 0);
     
-    // 🎯 AniList ফেইল করলে absoluteEpisode 1 হবে, তাই input.episode-ও ট্রাই করব
-    const hasAniList = aniMeta !== null;
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
     const userSeason = input.season || 1;
 
@@ -23,18 +22,16 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
+    
     candidates.forEach(cand => {
         if (cand.provider === 'hindi') {
             allVariants.push({ provider: 'hindi', slug: cand.rawSlug });
         } else {
             allVariants.push({ provider: 'desi', slug: cand.rawSlug });
-            // 🎯 baseName ভ্যারিয়েন্ট শুধু তখনই যোগ করব, যখন সেটা rawSlug থেকে আলাদা
-            if (cand.baseName !== cand.rawSlug) {
-                if (userSeason === 2) {
-                    allVariants.push({ provider: 'desi', slug: `${cand.baseName}-2nd-season` });
-                } else if (userSeason > 1) {
-                    allVariants.push({ provider: 'desi', slug: `${cand.baseName}-season-${userSeason}` });
-                }
+            if (userSeason === 2) {
+                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-2nd-season` });
+            } else if (userSeason > 1) {
+                allVariants.push({ provider: 'desi', slug: `${cand.baseName}-season-${userSeason}` });
             }
         }
     });
@@ -57,19 +54,19 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 if (list.length > 0) servers.push({ server: serverName, url: list[0].url, source: 'tatakai' });
                             } else {
                                 let matched = null;
-                                // ১. Regex Match (সিজন ১ হলে)
+                                // ১. সিজন ১ হলে Regex Match
                                 if (isSeasonOne) {
                                     matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
                                 }
-                                // ২. Absolute Episode Match
+                                // ২. Absolute Episode Match (Bleach TYBW-এর জন্য 367)
                                 if (!matched) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
                                     });
                                 }
-                                // ৩. Direct Episode Match (সিজন ১ বা AniList ফেইল হলে)
-                                if (!matched && (isSeasonOne || !hasAniList)) {
+                                // ৩. সিজন ১ হলে input.episode ফলব্যাক
+                                if (!matched && isSeasonOne) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
                                         return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
@@ -102,11 +99,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         });
                     }
                 } else {
-                    // 🎯 AniList ফেইল করলে input.episode-ও ট্রাই করব
-                    const epsToTry = (isSeasonOne || !hasAniList) 
-                        ? [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i) 
-                        : [absoluteEpisode];
-                    
+                    // 🎯 Desi-তে input.episode এবং absoluteEpisode দুটোই প্যারালালি ট্রাই করব
+                    const epsToTry = [input.episode, absoluteEpisode].filter((v, i, a) => a.indexOf(v) === i);
                     const watchPromises = epsToTry.map(epNum => 
                         fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${variant.slug}-episode-${epNum}`, 10000)
                     );
