@@ -16,14 +16,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
     const userSeason = input.season || 1;
+    const prequelYearStr = aniMeta?.prequelYear ? String(aniMeta.prequelYear) : "";
 
     const seasonStr = userSeason.toString();
     const episodeStr = input.episode.toString();
-    // Regex for S01E01 (strict boundary)
     const sxxeyyRegex = new RegExp(`S0?${seasonStr}E0?${episodeStr}(?!\\d)`, 'i');
 
     const allVariants: { provider: 'hindi'|'desi', slug: string }[] = [];
-    
     candidates.forEach(cand => {
         if (cand.provider === 'hindi') {
             allVariants.push({ provider: 'hindi', slug: cand.rawSlug });
@@ -42,9 +41,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = uniqueVariants.map(async (variant) => {
         let servers: any[] = [];
         try {
-            // ==========================================
-            // 🎯 ১. HINDI DUBBED LOGIC
-            // ==========================================
             if (variant.provider === 'hindi') {
                 const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/hindidubbed/anime/${variant.slug}`, 10000);
                 if (res.ok) {
@@ -54,19 +50,18 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     ['filemoon', 'servabyss'].forEach(serverName => {
                         if (serverObj[serverName] && Array.isArray(serverObj[serverName])) {
                             const list = serverObj[serverName];
-                            
                             if (input.is_movie) {
                                 if (list.length > 0) {
                                     const link = list[0].url;
-                                    // Bleach 2004 ব্লক
-                                    if (!(isSequel && link.includes('bleach-2004'))) {
+                                    // 🎯 ইউনিভার্সাল মুভি ব্লক
+                                    if (!(isSequel && prequelYearStr && link.includes(prequelYearStr))) {
                                         servers.push({ server: serverName, url: link, source: 'tatakai' });
                                     }
                                 }
                             } else {
                                 let matched = null;
                                 
-                                // ১. Absolute Episode Match (যেমন 367)
+                                // ১. Absolute Episode Match
                                 if (absoluteEpisode > 0) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
@@ -74,7 +69,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                     });
                                 }
                                 
-                                // ২. Direct Episode Match (যেমন 1) - Bleach TYBW-এর servabyss লিংকের জন্য
+                                // ২. Direct Episode Match
                                 if (!matched) {
                                     matched = list.find((item: any) => {
                                         const nums = String(item.name).match(/\d+/g) || [];
@@ -82,13 +77,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                     });
                                 }
                                 
-                                // ৩. Regex Match (শুধুমাত্র সিজন ১ হলে)
+                                // ৩. Regex Match
                                 if (!matched && isSeasonOne) {
                                     matched = list.find((item: any) => item.url && sxxeyyRegex.test(item.url));
                                 }
                                 
-                                // 🎯 ৪. সেফটি নেট: যদি Bleach TYBW হয়, আর লিংকে bleach-2004 থাকে, তবে ব্লক করবো
-                                if (matched && isSequel && matched.url.includes('bleach-2004')) {
+                                // 🎯 ৪. ইউনিভার্সাল সেফটি নেট: প্রিকুয়েলের বছর থাকলে ব্লক
+                                if (matched && isSequel && prequelYearStr && matched.url.includes(prequelYearStr)) {
                                     matched = null; 
                                 }
 
@@ -97,11 +92,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         }
                     });
                 }
-            } 
-            // ==========================================
-            // 🎯 ২. DESI DUB LOGIC
-            // ==========================================
-            else {
+            } else {
                 const infoRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${variant.slug}`, 10000);
                 if (!infoRes.ok) return servers;
 
@@ -113,7 +104,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (input.is_movie) {
                     if (episodes.length > 0) targetEpId = episodes[0].id;
                 } else {
-                    // ১. কঠোর এপিসোড ম্যাচিং (number বা id)
                     const foundEp = episodes.find((e: any) => {
                         let idEpNum = -1;
                         if (e.id) {
@@ -127,7 +117,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     if (foundEp) {
                         targetEpId = foundEp.id;
                     } else {
-                        // ২. ডাইনামিক বেস নাম এক্সট্রাকশন (র‍্যান্ডম স্লাগ থেকে আসল নাম)
                         let realBaseName = null;
                         if (episodes.length > 0 && episodes[0].id) {
                             const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
@@ -142,7 +131,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 10000);
                                 if (checkRes.ok) {
                                     const checkJson = await checkRes.json();
-                                    // রেসপন্সের টাইটেল ভ্যালিডেশন
                                     const responseTitle = checkJson?.data?.title || "";
                                     const responseEpMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
                                     
