@@ -26,6 +26,7 @@ export function cleanIframeUrl(htmlString: string): string {
   return htmlString;
 }
 
+// 🎯 সিক্যুয়েল কি না চেক (Bleach TYBW বা S2+ হলে true)
 export function isSequelTitle(title: string, romajiTitle?: string): boolean {
   const combined = `${title} ${romajiTitle || ''}`.toLowerCase();
   return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part/i.test(combined);
@@ -51,10 +52,12 @@ export function getLevenshteinDistance(a: string, b: string): number {
   return matrix[b.length][a.length];
 }
 
+// 🎯 Universal Strict Title Matcher
 export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
   const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
   const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9\s]/g, '');
 
+  // মুভি বনাম সিরিজ চেক
   if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
   if (!isMovie && cleanApi.includes('movie')) return false;
 
@@ -70,10 +73,12 @@ export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie:
 
   if (sWords.length === 0 || aWords.length === 0) return false;
 
+  // 🎯 Bleach 2004 ব্লক করার মেইন লজিক
   const isSearchSequel = isSequelTitle(searchTitle);
   const isApiSequel = isSequelTitle(apiTitle);
   if (isSearchSequel && !isApiSequel) return false;
 
+  // যদি API-র টাইটেল ১ শব্দের হয় (যেমন "Bleach"), তবে সার্চের প্রথম শব্দের সাথে মিলতে হবে
   if (aWords.length === 1) {
       return sWords[0] === aWords[0];
   }
