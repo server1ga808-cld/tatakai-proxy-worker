@@ -16,7 +16,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         let servers: any[] = [];
         try {
             // ==========================================
-            // 🎯 ১. HINDI DUB
+            // 🎯 ১. HINDI DUB (Strict Absolute Matching)
             // ==========================================
             if (cand.provider === 'hindi') {
                 const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/hindidubbed/anime/${cand.rawSlug}`, 8000);
@@ -36,12 +36,20 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 }
                             } else {
                                 let matched = null;
+                                
+                                // 🎯 মূল ফিক্স: সিক্যুয়েল হলে শুধুমাত্র absoluteEpisode খুঁজবে
                                 matched = list.find((item: any) => {
                                     const nums = String(item.name).match(/\d+/g) || [];
                                     const numArray = nums.map((n: string) => parseInt(n, 10));
-                                    return numArray.includes(absoluteEpisode) || numArray.includes(input.episode);
+                                    
+                                    if (isSequel) {
+                                        return numArray.includes(absoluteEpisode);
+                                    } else {
+                                        return numArray.includes(input.episode);
+                                    }
                                 });
                                 
+                                // Bleach 2004 Block
                                 if (matched && isSequel && prequelYearStr && matched.url.includes(prequelYearStr)) {
                                     matched = null; 
                                 }
@@ -52,12 +60,11 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             } 
             // ==========================================
-            // 🎯 ২. DESI DUB (Blind Watch Strategy)
+            // 🎯 ২. DESI DUB (Strict Absolute Blind Watch)
             // ==========================================
             else {
                 let targetEpId = null;
                 
-                // ১. Info Endpoint থেকে আসল নাম বের করা (Pagination বাইপাস)
                 const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
                 let realBaseName = null;
                 if (infoRes.ok) {
@@ -69,8 +76,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     }
                 }
 
-                // ২. Blind Watch Strategy (realBaseName দিয়ে সরাসরি হিট)
-                const epsToTry = [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i);
+                // 🎯 মূল ফিক্স: সিক্যুয়েল হলে শুধুমাত্র absoluteEpisode ট্রাই করবে, input.episode ব্লকড
+                const epsToTry = isSequel ? [absoluteEpisode] : [input.episode];
                 
                 if (realBaseName) {
                     for (const epNum of epsToTry) {
@@ -84,7 +91,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     }
                 }
 
-                // ৩. Fallback: raw slug দিয়ে ট্রাই
                 if (!targetEpId) {
                     for (const epNum of epsToTry) {
                         const tryId = `${cand.rawSlug}-episode-${epNum}`;
@@ -96,7 +102,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     }
                 }
 
-                // সোর্স এক্সট্রাক্ট
                 if (targetEpId) {
                     const watchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                     if (watchRes.ok) {
