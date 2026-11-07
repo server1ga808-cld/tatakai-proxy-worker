@@ -13,7 +13,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            // ১. Info Endpoint থেকে episodes[] আনা
+            // 🎯 ১. Info Endpoint থেকে episodes[] আনা
             const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
             let realBaseName = null;
             let targetEpId = null;
@@ -22,22 +22,21 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 const infoJson = await infoRes.json();
                 const episodes = infoJson?.data?.episodes || [];
                 
-                // 🎯 ১. first check: episodes[] অ্যারে-তে সরাসরি খোঁজা
                 if (episodes.length > 0) {
+                    // ১. অ্যারে-তে সরাসরি খোঁজা
                     const foundEp = episodes.find((e: any) => {
                         let idEpNum = -1;
                         if (e.id) {
                             const idMatch = String(e.id).match(/episode-(\d+)/i);
                             if (idMatch) idEpNum = parseInt(idMatch[1], 10);
                         }
-                        // input.episode অথবা absoluteEpisode
                         return Number(e.number) === input.episode || idEpNum === input.episode 
                             || Number(e.number) === absoluteEpisode || idEpNum === absoluteEpisode;
                     });
                     
                     if (foundEp) targetEpId = foundEp.id;
 
-                    // realBaseName বের করা
+                    // realBaseName বের করা (যেমন: bleach-sennen-kessen-hen)
                     if (episodes[0].id) {
                         const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
                         if (match) realBaseName = match[1];
@@ -45,7 +44,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ২. Blind Watch: অ্যারে-তে না পেলে সরাসরি URL চেক করা (প্রথমে input.episode, তারপর absolute)
+            // 🎯 ২. Blind Watch: অ্যারে-তে না পেলে সরাসরি URL চেক (Strict Verification)
             if (!targetEpId) {
                 const epsToTry = [input.episode, absoluteEpisode].filter((v, i, a) => a.indexOf(v) === i);
                 
@@ -60,6 +59,18 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
                         if (checkRes.ok) {
                             const checkJson = await checkRes.json();
+                            const responseTitle = checkJson?.data?.title || "";
+                            
+                            // 🎯 Response Title Verification (ভুল এপিসোড ব্লক করতে)
+                            const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
+                            if (titleMatch) {
+                                const returnedEp = parseInt(titleMatch[1], 10);
+                                // যদি রেসপন্সের এপিসোড নাম্বার requested এপিসোডের সাথে না মেলে, তবে রিজেক্ট
+                                if (returnedEp !== epNum && returnedEp !== input.episode && returnedEp !== absoluteEpisode) {
+                                    continue; // ভুল এপিসোড, পরেরটায় যাও
+                                }
+                            }
+                            
                             const sources = checkJson?.data?.sources || [];
                             if (sources.length > 0) { 
                                 targetEpId = tryId; 
