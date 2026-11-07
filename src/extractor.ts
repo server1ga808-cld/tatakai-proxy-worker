@@ -26,18 +26,25 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ২. অটো-ডিটেকশন: URL-এ season/part/cour থাকলে Per-Season, নাহলে Absolute
-            const checkStr = (realBaseName || cand.rawSlug).toLowerCase();
-            const isPerSeason = /season-\d+|part-\d+|cour-\d+/i.test(checkStr);
-            
-            let computedEpNum: number;
-            if (isPerSeason) {
-                // Per-Season: যেমন Demon Slayer S2 এর Episode 1 = episode-1
-                computedEpNum = input.episode;
-            } else {
-                // Absolute: Bleach TYBW Part 2 এর Episode 1 = episode-14
-                computedEpNum = input.episode + (aniMeta?.sameFranchisePrequelEpisodes || 0);
+            // 🎯 ২. অটো-অফসেট ডিটেকশন
+            let offset = 0;
+            if (aniMeta && aniMeta.immediatePrequelTitle) {
+                // আগের সিজনটি Desi-তে সার্চ করি
+                const prequelSearchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(aniMeta.immediatePrequelTitle)}`, 8000);
+                if (prequelSearchRes.ok) {
+                    const prequelData = await prequelSearchRes.json();
+                    const prequelResults = prequelData?.data?.results || [];
+                    // আগের সিজনের স্লাগ
+                    const prequelSlug = prequelResults[0]?.id || "";
+                    
+                    // যদি আগের সিজনের স্লাগ এবং বর্তমান স্লাগ মিলে যায়, তবে এরা একই Desi সিজনে আছে
+                    if (prequelSlug === cand.rawSlug || (realBaseName && prequelSlug.includes(realBaseName))) {
+                        offset = aniMeta.immediatePrequelEpisodes;
+                    }
+                }
             }
+
+            const computedEpNum = input.episode + offset;
 
             // ৩. প্রথমে Info অ্যারে-তে খুঁজি
             let targetEpId = null;
