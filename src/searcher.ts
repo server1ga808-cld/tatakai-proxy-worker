@@ -1,4 +1,4 @@
-import { fetchWithTimeout, getSimilarityScore } from './utils';
+import { fetchWithTimeout, getSimilarityScore, isSequelTitle } from './utils';
 import { ProxyInput } from './types';
 import { getAniListMeta } from './anilist';
 
@@ -18,6 +18,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const queries = [titleToUse, romajiToUse, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
     
     const queryLower = titleToUse.toLowerCase();
+    const isInputSequel = isSequelTitle(titleToUse, romajiToUse);
+
+    // 🎯 পার্ট কীওয়ার্ড
     const partKeywords = ['separation', 'conflict', 'calamity', 'ketsubetsu', 'kashin', 'culling game'];
     const queryHasPart = partKeywords.find(kw => queryLower.includes(kw));
 
@@ -34,8 +37,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 if (!input.is_movie && anime.type === 'MOVIE') return;
 
                 const apiTitleLower = anime.title.toLowerCase();
-                const apiHasPart = partKeywords.find(kw => apiTitleLower.includes(kw));
+                const isApiSequel = isSequelTitle(anime.title);
+                
+                // 🎯 মূল ফিক্স: ইনপুট সিক্যুয়েল হলে API-ও সিক্যুয়েল হতে হবে
+                if (isInputSequel && !isApiSequel) return;
 
+                // পার্ট ম্যাচিং
+                const apiHasPart = partKeywords.find(kw => apiTitleLower.includes(kw));
                 if (queryHasPart && apiHasPart !== queryHasPart) return;
                 if (!queryHasPart && apiHasPart) return;
 
@@ -46,7 +54,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     await Promise.allSettled(searchPromises);
 
-    // 🎯 স্কোর অনুযায়ী সর্ট করব এবং শুধুমাত্র টপ ১টি স্লাগ নিবো (ডুপ্লিকেট ও স্লো ফিক্স)
     candidates.sort((a, b) => b.score - a.score);
     const unique = new Map();
     candidates.forEach(c => {
