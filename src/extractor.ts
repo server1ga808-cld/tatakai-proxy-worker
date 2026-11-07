@@ -12,7 +12,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            // ১. Info Endpoint থেকে realBaseName বের করা
+            // ১. Info Endpoint থেকে realBaseName এবং episodes[] আনা
             const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
             let realBaseName = null;
             let infoEpisodes: any[] = [];
@@ -26,38 +26,42 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ২. অটো-অফসেট ডিটেকশন (শুধুমাত্র তখনই কাজ করবে যখন Desi-তে আগের ও বর্তমান সিজন একই স্লাগে আছে)
-            let offset = 0;
-            if (aniMeta && aniMeta.immediatePrequelTitle && aniMeta.immediatePrequelEpisodes > 0) {
-                const prequelSearchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(aniMeta.immediatePrequelTitle)}`, 8000);
-                if (prequelSearchRes.ok) {
-                    const prequelData = await prequelSearchRes.json();
-                    const prequelResults = prequelData?.data?.results || [];
-                    if (prequelResults.length > 0) {
-                        const prequelSlug = prequelResults[0].id;
-                        // যদি আগের সিজনের স্লাগ এবং বর্তমান সিজনের স্লাগ হুবহু একই হয়
-                        if (prequelSlug === cand.rawSlug || (realBaseName && prequelSlug.includes(realBaseName))) {
-                            offset = aniMeta.immediatePrequelEpisodes;
-                        }
-                    }
-                }
+            // 🎯 ২. সম্ভাব্য সব এপিসোড নাম্বার তৈরি করা
+            let epsToTry: number[] = [];
+            
+            // ১. Immediate Prequel Offset (যেমন Ent Dist: 1 + 7 = 8)
+            if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
+                epsToTry.push(input.episode + aniMeta.immediatePrequelEpisodes);
+            }
+            
+            // ২. Direct Episode (যেমন Mugen Train: 1)
+            epsToTry.push(input.episode);
+
+            // ৩. Full Absolute Offset (যেমন Bleach Part 2: 1 + 13 = 14)
+            if (aniMeta?.prequelEpisodes && aniMeta.prequelEpisodes > 0) {
+                epsToTry.push(input.episode + aniMeta.prequelEpisodes);
             }
 
-            // 🎯 computed episode number (সবসময় input + offset)
-            const computedEpNum = input.episode + offset;
+            // ডুপ্লিকেট রিমুভ
+            epsToTry = [...new Set(epsToTry)];
 
             // ৩. প্রথমে Info অ্যারে-তে খুঁজি
             let targetEpId = null;
             if (infoEpisodes.length > 0) {
-                const found = infoEpisodes.find((e: any) => {
-                    let idEpNum = -1;
-                    if (e.id) {
-                        const m = String(e.id).match(/episode-(\d+)/i);
-                        if (m) idEpNum = parseInt(m[1], 10);
+                for (const epNum of epsToTry) {
+                    const found = infoEpisodes.find((e: any) => {
+                        let idEpNum = -1;
+                        if (e.id) {
+                            const m = String(e.id).match(/episode-(\d+)/i);
+                            if (m) idEpNum = parseInt(m[1], 10);
+                        }
+                        return Number(e.number) === epNum || idEpNum === epNum;
+                    });
+                    if (found) {
+                        targetEpId = found.id;
+                        break;
                     }
-                    return Number(e.number) === computedEpNum || idEpNum === computedEpNum;
-                });
-                if (found) targetEpId = found.id;
+                }
             }
 
             // ৪. Blind Watch (যদি Info অ্যারে-তে না পাই)
@@ -68,14 +72,16 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
                 outerLoop:
                 for (const base of basesToTry) {
-                    const tryId = `${base}-episode-${computedEpNum}`;
-                    const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
-                    if (checkRes.ok) {
-                        const checkJson = await checkRes.json();
-                        const sources = checkJson?.data?.sources || [];
-                        if (sources.length > 0) {
-                            targetEpId = tryId;
-                            break outerLoop;
+                    for (const epNum of epsToTry) {
+                        const tryId = `${base}-episode-${epNum}`;
+                        const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
+                        if (checkRes.ok) {
+                            const checkJson = await checkRes.json();
+                            const sources = checkJson?.data?.sources || [];
+                            if (sources.length > 0) {
+                                targetEpId = tryId;
+                                break outerLoop;
+                            }
                         }
                     }
                 }
