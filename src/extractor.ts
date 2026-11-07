@@ -8,7 +8,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    const isSequel = isSequelTitle(input.title, input.romaji_title);
+    // 🎯 মূল ফিক্স: টাইটেলের ওপর ভরসা না করে AniList-এর prequelEpisodes-এর ওপর ভরসা করব
+    const isSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
     const prequelYearStr = aniMeta?.prequelYear ? String(aniMeta.prequelYear) : "";
 
@@ -36,18 +37,18 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 }
                             } else {
                                 let matched = null;
-                                
-                                // 🎯 মূল ফিক্স: সিক্যুয়েল হলে শুধুমাত্র absoluteEpisode খুঁজবে
-                                matched = list.find((item: any) => {
-                                    const nums = String(item.name).match(/\d+/g) || [];
-                                    const numArray = nums.map((n: string) => parseInt(n, 10));
-                                    
-                                    if (isSequel) {
-                                        return numArray.includes(absoluteEpisode);
-                                    } else {
-                                        return numArray.includes(input.episode);
-                                    }
-                                });
+                                // 🎯 সিক্যুয়েল হলে শুধুমাত্র absoluteEpisode খুঁজবে
+                                if (isSequel) {
+                                    matched = list.find((item: any) => {
+                                        const nums = String(item.name).match(/\d+/g) || [];
+                                        return nums.map((n: string) => parseInt(n, 10)).includes(absoluteEpisode);
+                                    });
+                                } else {
+                                    matched = list.find((item: any) => {
+                                        const nums = String(item.name).match(/\d+/g) || [];
+                                        return nums.map((n: string) => parseInt(n, 10)).includes(input.episode);
+                                    });
+                                }
                                 
                                 // Bleach 2004 Block
                                 if (matched && isSequel && prequelYearStr && matched.url.includes(prequelYearStr)) {
@@ -60,7 +61,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             } 
             // ==========================================
-            // 🎯 ২. DESI DUB (Strict Absolute Blind Watch)
+            // 🎯 ২. DESI DUB (Blind Watch Strategy)
             // ==========================================
             else {
                 let targetEpId = null;
@@ -76,9 +77,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     }
                 }
 
-                // 🎯 মূল ফিক্স: সিক্যুয়েল হলে শুধুমাত্র absoluteEpisode ট্রাই করবে, input.episode ব্লকড
-                const epsToTry = isSequel ? [absoluteEpisode] : [input.episode];
-                
+                // 🎯 Desi ফিক্স: স্লাগে season/part থাকলে input.episode-ও ট্রাই করবে
+                let epsToTry = [absoluteEpisode];
+                const hasSeasonInSlug = /season|part|2nd|3rd|4th|cour/i.test(cand.rawSlug);
+                if (!isSequel || hasSeasonInSlug) {
+                    epsToTry.push(input.episode);
+                }
+                epsToTry = [...new Set(epsToTry)]; // ডুপ্লিকেট রিমুভ
+
                 if (realBaseName) {
                     for (const epNum of epsToTry) {
                         const tryId = `${realBaseName}-episode-${epNum}`;
