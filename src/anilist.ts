@@ -9,6 +9,7 @@ export interface AniListMeta {
     seasonsBefore: number;
     prequelEpisodes: number;
     prequelYear: number;
+    sameFranchisePrequelEpisodes: number; // 🎯 নতুন ফিল্ড
 }
 
 async function fetchMedia(id: number) {
@@ -24,9 +25,7 @@ async function fetchMedia(id: number) {
           edges {
             relationType
             node {
-              id
-              format
-              episodes
+              id format episodes
               title { english romaji }
               startDate { year }
             }
@@ -61,9 +60,13 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
     const media = await fetchMedia(anilistId);
     if (!media) return null;
 
+    const currentYear = media.startDate?.year || media.seasonYear || 0;
+    const currentTitle = (media.title?.english || media.title?.romaji || '').toLowerCase();
+
     let seasonsBefore = 0;
     let prequelEpisodes = 0;
     let prequelYear = 0;
+    let sameFranchisePrequelEpisodes = 0; // 🎯 একই ফ্র্যাঞ্চাইজির এপিসোড
     let currentMedia = media;
     let visited = new Set<number>();
     visited.add(anilistId);
@@ -85,6 +88,18 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
             if (prequelYear === 0) {
                 prequelYear = bestPrequel.node.startDate?.year || 0;
             }
+
+            // 🎯 মূল ফিক্স: ৪ বছরের মধ্যে এবং টাইটেল মিললে সেটা Same Franchise
+            const prequelYearVal = bestPrequel.node.startDate?.year || 0;
+            const prequelTitle = (bestPrequel.node.title?.english || bestPrequel.node.title?.romaji || '').toLowerCase();
+            
+            const yearDiff = Math.abs(currentYear - prequelYearVal);
+            const titleSimilar = currentTitle.includes(prequelTitle.split(':')[0]) || 
+                                 prequelTitle.includes(currentTitle.split(':')[0]);
+            
+            if (yearDiff <= 4 && titleSimilar) {
+                sameFranchisePrequelEpisodes += (bestPrequel.node.episodes || 0);
+            }
             
             const prequelMedia = await fetchMedia(bestPrequel.node.id);
             if (!prequelMedia) break;
@@ -98,10 +113,11 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         format: media.format || 'TV',
         englishTitle: media.title?.english || '',
         romajiTitle: media.title?.romaji || '',
-        year: media.startDate?.year || media.seasonYear || 0,
+        year: currentYear,
         seasonsBefore,
         prequelEpisodes,
-        prequelYear
+        prequelYear,
+        sameFranchisePrequelEpisodes
     };
 
     cache.set(anilistId, { data: meta, expiry: now + 5 * 60 * 1000 });
