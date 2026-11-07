@@ -1,4 +1,4 @@
-export async function fetchWithTimeout(url: string, timeoutMs: number = 15000): Promise<Response> {
+export async function fetchWithTimeout(url: string, timeoutMs: number = 10000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -26,44 +26,49 @@ export function cleanIframeUrl(htmlString: string): string {
   return htmlString;
 }
 
+export function decodeEmbedId(raw: string): { server: string; url: string } | null {
+  try {
+    const [nameB64, urlB64] = raw.split(":");
+    if (!nameB64 || !urlB64) return null;
+    const server = Buffer.from(nameB64, "base64").toString("utf-8");
+    let url = Buffer.from(urlB64, "base64").toString("utf-8");
+    url = cleanIframeUrl(url);
+    return { server, url };
+  } catch {
+    return null;
+  }
+}
+
 export function isSequelTitle(title: string, romajiTitle?: string): boolean {
   const combined = `${title} ${romajiTitle || ''}`.toLowerCase();
   return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part|cour\s*[2-9]/i.test(combined);
 }
 
-export function getLevenshteinDistance(a: string, b: string): number {
+export function getSimilarityScore(s1: string, s2: string): number {
+  const clean1 = s1.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const clean2 = s2.toLowerCase().replace(/[^a-z0-9]/g, '');
+  
+  if (clean1 === clean2) return 100;
+  if (clean1.includes(clean2) || clean2.includes(clean1)) return 90;
+
+  const tokens1 = new Set(s1.toLowerCase().split(/\s+/));
+  const tokens2 = new Set(s2.toLowerCase().split(/\s+/));
+  let intersection = 0;
+  tokens1.forEach(t => { if (tokens2.has(t)) intersection++; });
+  const jaccard = intersection / (tokens1.size + tokens2.size - intersection);
+
   const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
+  for (let i = 0; i <= clean2.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= clean1.length; j++) matrix[0][j] = j;
+  for (let i = 1; i <= clean2.length; i++) {
+    for (let j = 1; j <= clean1.length; j++) {
+      matrix[i][j] = clean2[i - 1] === clean1[j - 1]
+        ? matrix[i - 1][j - 1]
+        : Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
     }
   }
-  return matrix[b.length][a.length];
-}
-
-export function strictTitleMatch(searchTitle: string, apiTitle: string, isMovie: boolean): boolean {
-  const cleanSearch = searchTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const cleanApi = apiTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  if (isMovie && (cleanApi.includes('season') || cleanApi.includes('episode'))) return false;
-  if (!isMovie && cleanApi.includes('movie')) return false;
-
-  // 🎯 সরাসরি ম্যাচ বা সাবস্ট্রিং ম্যাচ
-  if (cleanSearch === cleanApi) return true;
-  if (cleanApi.includes(cleanSearch) || cleanSearch.includes(cleanApi)) return true;
-
-  // 🎯 লেভেনশটাইন ডিস্ট্যান্স
-  const distance = getLevenshteinDistance(cleanSearch, cleanApi);
-  const maxAllowed = Math.max(3, Math.floor(Math.max(cleanSearch.length, cleanApi.length) * 0.3));
-  return distance <= maxAllowed;
+  const maxLen = Math.max(clean1.length, clean2.length);
+  const levScore = maxLen === 0 ? 1 : (1 - matrix[clean2.length][clean1.length] / maxLen);
+  
+  return (levScore * 50) + (jaccard * 50);
 }
