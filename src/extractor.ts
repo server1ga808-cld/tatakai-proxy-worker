@@ -8,52 +8,41 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    const isSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
 
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            let targetEpId = null;
-            
+            // 🎯 ১. Info Endpoint থেকে এপিসোড লিস্ট নেওয়া
             const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
-            let realBaseName = null;
-            if (infoRes.ok) {
-                const infoJson = await infoRes.json();
-                const episodes = infoJson?.data?.episodes || [];
-                if (episodes.length > 0 && episodes[0].id) {
-                    const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
-                    if (match) realBaseName = match[1];
-                }
-            }
+            if (!infoRes.ok) return servers;
+            
+            const infoJson = await infoRes.json();
+            const episodes = infoJson?.data?.episodes || [];
+            
+            // 🎯 ২. অ্যারে-তে থাকা এপিসোডের সাথে ম্যাচ করা
+            let targetEpId = null;
 
-            // 🎯 Absolute এবং Input Episode দুটোই ট্রাই করব (ফলব্যাক)
-            let epsToTry = [absoluteEpisode, input.episode];
-            epsToTry = [...new Set(epsToTry)]; 
-
-            if (realBaseName) {
-                for (const epNum of epsToTry) {
-                    const tryId = `${realBaseName}-episode-${epNum}`;
-                    const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
-                    if (checkRes.ok) {
-                        const checkJson = await checkRes.json();
-                        const sources = checkJson?.data?.sources || [];
-                        if (sources.length > 0) { targetEpId = tryId; break; }
+            if (input.is_movie) {
+                if (episodes.length > 0) targetEpId = episodes[0].id;
+            } else {
+                // Exact Match (number বা id-তে absolute বা input episode)
+                const foundEp = episodes.find((e: any) => {
+                    let idEpNum = -1;
+                    if (e.id) {
+                        const idMatch = String(e.id).match(/episode-(\d+)/i);
+                        if (idMatch) idEpNum = parseInt(idMatch[1], 10);
                     }
+                    return Number(e.number) === input.episode || idEpNum === input.episode 
+                        || Number(e.number) === absoluteEpisode || idEpNum === absoluteEpisode;
+                });
+
+                if (foundEp) {
+                    targetEpId = foundEp.id;
                 }
             }
 
-            if (!targetEpId) {
-                for (const epNum of epsToTry) {
-                    const tryId = `${cand.rawSlug}-episode-${epNum}`;
-                    const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
-                    if (checkRes.ok) {
-                        const checkJson = await checkRes.json();
-                        if (checkJson?.data?.sources?.length > 0) { targetEpId = tryId; break; }
-                    }
-                }
-            }
-
+            // 🎯 ৩. যদি API-তে এপিসোড না থাকে, তবে কিছুই রিটার্ন করব না (No Guess)
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
@@ -64,7 +53,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                             const finalUrl = decoded?.url || src.url;
                             servers.push({ 
                                 server: src.server, 
-                                url: cleanIframeUrl(finalUrl), // 🎯 iframe ট্যাগ সেফটি
+                                url: cleanIframeUrl(finalUrl), 
                                 source: 'tatakai' 
                             });
                         }
