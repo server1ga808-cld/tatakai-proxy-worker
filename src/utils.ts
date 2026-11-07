@@ -39,15 +39,16 @@ export function decodeEmbedId(raw: string): { server: string; url: string } | nu
   }
 }
 
+// 🎯 জাপানি পার্ট নাম (Ketsubetsu, Kashin) যোগ করা হয়েছে
 export function isSequelTitle(title: string, romajiTitle?: string): boolean {
   const combined = `${title} ${romajiTitle || ''}`.toLowerCase();
-  return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part|cour\s*[2-9]/i.test(combined);
+  return /season\s*[2-9]|part\s*[2-9]|blood war|final season|2nd season|3rd season|4th season|2nd part|3rd part|cour\s*[2-9]|separation|conflict|calamity|ketsubetsu|kashin|sou|kessen/i.test(combined);
 }
 
 export function getSimilarityScore(s1: string, s2: string): number {
   const clean1 = s1.toLowerCase().replace(/[^a-z0-9]/g, '');
   const clean2 = s2.toLowerCase().replace(/[^a-z0-9]/g, '');
-  
+
   if (clean1 === clean2) return 100;
   if (clean1.includes(clean2) || clean2.includes(clean1)) return 90;
 
