@@ -1,4 +1,4 @@
-import { fetchWithTimeout, decodeEmbedId } from './utils';
+import { fetchWithTimeout, decodeEmbedId, cleanIframeUrl } from './utils';
 import { Candidate } from './searcher';
 import { ProxyInput } from './types';
 import { getAniListMeta } from './anilist';
@@ -8,7 +8,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    // 🎯 AniList-এর prequelEpisodes > 0 হলেই সেটাকে সিক্যুয়েল ধরব
     const isSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const absoluteEpisode = input.episode + (aniMeta?.prequelEpisodes || 0);
 
@@ -17,7 +16,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         try {
             let targetEpId = null;
             
-            // ১. Info Endpoint থেকে আসল নাম বের করা (Pagination বাইপাস)
             const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
             let realBaseName = null;
             if (infoRes.ok) {
@@ -29,15 +27,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // ২. Blind Watch Strategy (সিক্যুয়েল হলে absoluteEpisode, নাহলে input.episode)
-            let epsToTry = [absoluteEpisode];
-            const hasSeasonInSlug = /season|part|2nd|3rd|4th|cour/i.test(cand.rawSlug);
-            if (!isSequel || hasSeasonInSlug) {
-                epsToTry.push(input.episode);
-            }
-            epsToTry = [...new Set(epsToTry)]; // ডুপ্লিকেট রিমুভ
+            // 🎯 Absolute এবং Input Episode দুটোই ট্রাই করব (ফলব্যাক)
+            let epsToTry = [absoluteEpisode, input.episode];
+            epsToTry = [...new Set(epsToTry)]; 
 
-            // ৩. realBaseName দিয়ে ট্রাই
             if (realBaseName) {
                 for (const epNum of epsToTry) {
                     const tryId = `${realBaseName}-episode-${epNum}`;
@@ -50,7 +43,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // ৪. Fallback: raw slug দিয়ে ট্রাই
             if (!targetEpId) {
                 for (const epNum of epsToTry) {
                     const tryId = `${cand.rawSlug}-episode-${epNum}`;
@@ -62,14 +54,19 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // ৫. সোর্স এক্সট্রাক্ট করা
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
                     const watchJson = await watchRes.json();
                     (watchJson?.data?.sources || []).forEach((src: any) => {
                         if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
-                            servers.push({ server: src.server, url: decodeEmbedId(src.url)?.url || src.url, source: 'tatakai' });
+                            const decoded = decodeEmbedId(src.url);
+                            const finalUrl = decoded?.url || src.url;
+                            servers.push({ 
+                                server: src.server, 
+                                url: cleanIframeUrl(finalUrl), // 🎯 iframe ট্যাগ সেফটি
+                                source: 'tatakai' 
+                            });
                         }
                     });
                 }
