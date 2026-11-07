@@ -26,24 +26,24 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ২. অটো-অফসেট ডিটেকশন
+            // 🎯 ২. অটো-অফসেট ডিটেকশন (শুধুমাত্র তখনই কাজ করবে যখন Desi-তে আগের ও বর্তমান সিজন একই স্লাগে আছে)
             let offset = 0;
-            if (aniMeta && aniMeta.immediatePrequelTitle) {
-                // আগের সিজনটি Desi-তে সার্চ করি
+            if (aniMeta && aniMeta.immediatePrequelTitle && aniMeta.immediatePrequelEpisodes > 0) {
                 const prequelSearchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(aniMeta.immediatePrequelTitle)}`, 8000);
                 if (prequelSearchRes.ok) {
                     const prequelData = await prequelSearchRes.json();
                     const prequelResults = prequelData?.data?.results || [];
-                    // আগের সিজনের স্লাগ
-                    const prequelSlug = prequelResults[0]?.id || "";
-                    
-                    // যদি আগের সিজনের স্লাগ এবং বর্তমান স্লাগ মিলে যায়, তবে এরা একই Desi সিজনে আছে
-                    if (prequelSlug === cand.rawSlug || (realBaseName && prequelSlug.includes(realBaseName))) {
-                        offset = aniMeta.immediatePrequelEpisodes;
+                    if (prequelResults.length > 0) {
+                        const prequelSlug = prequelResults[0].id;
+                        // যদি আগের সিজনের স্লাগ এবং বর্তমান সিজনের স্লাগ হুবহু একই হয়
+                        if (prequelSlug === cand.rawSlug || (realBaseName && prequelSlug.includes(realBaseName))) {
+                            offset = aniMeta.immediatePrequelEpisodes;
+                        }
                     }
                 }
             }
 
+            // 🎯 computed episode number (সবসময় input + offset)
             const computedEpNum = input.episode + offset;
 
             // ৩. প্রথমে Info অ্যারে-তে খুঁজি
