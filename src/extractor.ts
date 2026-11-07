@@ -16,7 +16,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         let servers: any[] = [];
         try {
             // ==========================================
-            // 🎯 ১. HINDI DUB (No Pagination, Mixed Names)
+            // 🎯 ১. HINDI DUB
             // ==========================================
             if (cand.provider === 'hindi') {
                 const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/hindidubbed/anime/${cand.rawSlug}`, 8000);
@@ -36,14 +36,12 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                                 }
                             } else {
                                 let matched = null;
-                                // Regex Match: "01", "Episode 1", "Episode 25 ( S2EP01 )" সবই ধরবে
                                 matched = list.find((item: any) => {
                                     const nums = String(item.name).match(/\d+/g) || [];
                                     const numArray = nums.map((n: string) => parseInt(n, 10));
                                     return numArray.includes(absoluteEpisode) || numArray.includes(input.episode);
                                 });
                                 
-                                // Bleach 2004 Block
                                 if (matched && isSequel && prequelYearStr && matched.url.includes(prequelYearStr)) {
                                     matched = null; 
                                 }
@@ -54,12 +52,12 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             } 
             // ==========================================
-            // 🎯 ২. DESI DUB (Blind Watch Bypass)
+            // 🎯 ২. DESI DUB (Blind Watch Strategy)
             // ==========================================
             else {
                 let targetEpId = null;
                 
-                // ১. Info Endpoint থেকে আসল নাম বের করা (শুধু বেস নাম extraction)
+                // ১. Info Endpoint থেকে আসল নাম বের করা (Pagination বাইপাস)
                 const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 8000);
                 let realBaseName = null;
                 if (infoRes.ok) {
@@ -71,7 +69,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     }
                 }
 
-                // ২. Blind Watch Strategy
+                // ২. Blind Watch Strategy (realBaseName দিয়ে সরাসরি হিট)
                 const epsToTry = [absoluteEpisode, input.episode].filter((v, i, a) => a.indexOf(v) === i);
                 
                 if (realBaseName) {
@@ -116,6 +114,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     });
 
     const results = await Promise.allSettled(extractionPromises);
+    
     results.forEach(res => {
         if (res.status === 'fulfilled' && res.value.length > 0) {
             res.value.forEach((serverObj: any) => {
