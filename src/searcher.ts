@@ -17,11 +17,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const mainTitle = titleToUse.split(':')[0].trim();
     const queries = [titleToUse, romajiToUse, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
     
-    const isSequel = isSequelTitle(titleToUse, romajiToUse);
     const queryLower = titleToUse.toLowerCase();
 
-    // 🎯 এক্সট্রা পার্টগুলো ব্লক করার লিস্ট (যেমন Bleach TYBW-এর The Separation, The Conflict)
-    const sequelParts = ['separation', 'conflict', 'calamity', 'culling game', 'part 2', 'part 3', 'cour 2'];
+    // 🎯 পার্ট কীওয়ার্ড ডিটেকশন (The Separation, The Conflict ইত্যাদি)
+    const partKeywords = ['separation', 'conflict', 'calamity', 'ketsubetsu', 'kashin', 'culling game'];
+    const queryHasPart = partKeywords.find(kw => queryLower.includes(kw));
 
     const searchPromises = queries.map(async (query) => {
         const [hindiRes, desiRes] = await Promise.allSettled([
@@ -29,36 +29,34 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000)
         ]);
 
-        // Hindi Search
+        const processResult = (anime: any, provider: 'hindi' | 'desi', slug: string) => {
+            if (getSimilarityScore(query, anime.title) < 55) return;
+
+            const apiTitleLower = anime.title.toLowerCase();
+            const apiHasPart = partKeywords.find(kw => apiTitleLower.includes(kw));
+
+            // 🎯 পার্ট ম্যাচিং রুল:
+            // ১. যদি ইউজার নির্দিষ্ট পার্ট চায় (separation/conflict), তাহলে সেই পার্টই আসবে
+            // ২. যদি ইউজার জেনেরিক চায় (TYBW), তাহলে Part 1 (কোনো পার্ট কীওয়ার্ড নেই) আসবে
+            if (queryHasPart && apiHasPart !== queryHasPart) return;
+            if (!queryHasPart && apiHasPart) return;
+
+            candidates.push({ provider, rawSlug: slug });
+        };
+
+        // Hindi
         if (hindiRes.status === 'fulfilled' && hindiRes.value.ok) {
             const data = await hindiRes.value.json();
-            (data?.data?.animeList || []).forEach((anime: any) => {
-                if (getSimilarityScore(query, anime.title) >= 55) {
-                    if (isSequel && !isSequelTitle(anime.title)) return;
-                    
-                    const apiTitleLower = anime.title.toLowerCase();
-                    if (sequelParts.some(part => apiTitleLower.includes(part) && !queryLower.includes(part))) return;
-
-                    candidates.push({ provider: 'hindi', rawSlug: anime.slug });
-                }
-            });
+            (data?.data?.animeList || []).forEach((anime: any) => processResult(anime, 'hindi', anime.slug));
         }
 
-        // Desi Search
+        // Desi
         if (desiRes.status === 'fulfilled' && desiRes.value.ok) {
             const data = await desiRes.value.json();
             (data?.data?.results || []).forEach((anime: any) => {
-                if (getSimilarityScore(query, anime.title) >= 55) {
-                    if (isSequel && !isSequelTitle(anime.title)) return;
-                    if (input.is_movie && anime.type !== 'MOVIE') return;
-                    if (!input.is_movie && anime.type === 'MOVIE') return;
-
-                    const apiTitleLower = anime.title.toLowerCase();
-                    // 🎯 এক্সট্রা পার্ট ব্লক করা হচ্ছে
-                    if (sequelParts.some(part => apiTitleLower.includes(part) && !queryLower.includes(part))) return;
-
-                    candidates.push({ provider: 'desi', rawSlug: anime.id });
-                }
+                if (input.is_movie && anime.type !== 'MOVIE') return;
+                if (!input.is_movie && anime.type === 'MOVIE') return;
+                processResult(anime, 'desi', anime.id);
             });
         }
     });
@@ -67,5 +65,5 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     const unique = new Map();
     candidates.forEach(c => unique.set(c.provider + '-' + c.rawSlug, c));
-    return Array.from(unique.values()).slice(0, 3); // সর্বোচ্চ ৩টি ক্যান্ডিডেট
+    return Array.from(unique.values()).slice(0, 3);
 }
