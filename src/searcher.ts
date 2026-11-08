@@ -20,7 +20,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const queryLower = titleToUse.toLowerCase();
     const isInputSequel = isSequelTitle(titleToUse, romajiToUse);
 
-    // 🎯 পার্ট কীওয়ার্ড
     const partKeywords = ['separation', 'conflict', 'calamity', 'ketsubetsu', 'kashin', 'culling game'];
     const queryHasPart = partKeywords.find(kw => queryLower.includes(kw));
 
@@ -39,10 +38,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const isApiSequel = isSequelTitle(anime.title);
                 
-                // 🎯 মূল ফিক্স: ইনপুট সিক্যুয়েল হলে API-ও সিক্যুয়েল হতে হবে
                 if (isInputSequel && !isApiSequel) return;
 
-                // পার্ট ম্যাচিং
                 const apiHasPart = partKeywords.find(kw => apiTitleLower.includes(kw));
                 if (queryHasPart && apiHasPart !== queryHasPart) return;
                 if (!queryHasPart && apiHasPart) return;
