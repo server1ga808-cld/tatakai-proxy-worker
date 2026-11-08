@@ -9,6 +9,18 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     
     const aniMeta = await getAniListMeta(input.anilist_id);
 
+    // 🎯 Prequel Slug একবার চেক করি (offset ক্যালকুলেশনের জন্য)
+    let prequelSlug: string | null = null;
+    if (aniMeta?.immediatePrequelTitle) {
+        try {
+            const prequelRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(aniMeta.immediatePrequelTitle)}`, 8000);
+            if (prequelRes.ok) {
+                const prequelData = await prequelRes.json();
+                prequelSlug = prequelData?.data?.results?.[0]?.id || null;
+            }
+        } catch (e) {}
+    }
+
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
@@ -25,38 +37,29 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Smart Candidate Generation (Priority: Offset > Direct)
-            let candidateNums: number[] = [];
-            
-            // ১. Immediate Prequel Offset (Ent District = 1+7=8)
-            if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
-                candidateNums.push(input.episode + aniMeta.immediatePrequelEpisodes);
+            // 🎯 Smart Offset Calculation
+            let offset = 0;
+            if (aniMeta?.immediatePrequelTitle && aniMeta.immediatePrequelEpisodes > 0) {
+                // যদি Prequel Slug এবং বর্তমান Slug একই হয় → Combined Season → Offset যুক্ত করব
+                if (prequelSlug === cand.rawSlug) {
+                    offset = aniMeta.immediatePrequelEpisodes;
+                }
             }
-            // ২. Total Prequel Offset (Bleach P3 = 1+26=27)
-            if (aniMeta?.prequelEpisodes && aniMeta.prequelEpisodes > 0 && 
-                aniMeta.prequelEpisodes !== aniMeta.immediatePrequelEpisodes) {
-                candidateNums.push(input.episode + aniMeta.prequelEpisodes);
-            }
-            // ৩. Direct Episode (Mugen Train = 1)
-            candidateNums.push(input.episode);
 
-            candidateNums = [...new Set(candidateNums)].filter(n => n > 0);
+            const targetEp = input.episode + offset;
 
             // ধাপ ১: Info অ্যারে-তে সরাসরি খোঁজা
             let targetEpId = null;
-            for (const epNum of candidateNums) {
+            if (infoEpisodes.length > 0) {
                 const found = infoEpisodes.find((e: any) => {
                     let idEpNum = -1;
                     if (e.id) {
                         const m = String(e.id).match(/episode-(\d+)/i);
                         if (m) idEpNum = parseInt(m[1], 10);
                     }
-                    return Number(e.number) === epNum || idEpNum === epNum;
+                    return Number(e.number) === targetEp || idEpNum === targetEp;
                 });
-                if (found) {
-                    targetEpId = found.id;
-                    break;
-                }
+                if (found) targetEpId = found.id;
             }
 
             // ধাপ ২: Blind Watch
@@ -67,27 +70,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
                 outerLoop:
                 for (const base of basesToTry) {
-                    for (const epNum of candidateNums) {
-                        const tryId = `${base}-episode-${epNum}`;
-                        const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
-                        if (checkRes.ok) {
-                            const checkJson = await checkRes.json();
-                            const responseTitle = checkJson?.data?.title || "";
-                            const sources = checkJson?.data?.sources || [];
-                            
-                            // Strict Verification: রেসপন্সের এপিসোড নাম্বার মিলছে কি না
-                            const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-                            if (titleMatch && sources.length > 0) {
-                                const returnedEp = parseInt(titleMatch[1], 10);
-                                if (!candidateNums.includes(returnedEp)) {
-                                    continue;
-                                }
-                            }
-                            
-                            if (sources.length > 0) {
-                                targetEpId = tryId;
-                                break outerLoop;
-                            }
+                    const tryId = `${base}-episode-${targetEp}`;
+                    const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
+                    if (checkRes.ok) {
+                        const checkJson = await checkRes.json();
+                        const sources = checkJson?.data?.sources || [];
+                        if (sources.length > 0) {
+                            targetEpId = tryId;
+                            break outerLoop;
                         }
                     }
                 }
@@ -110,7 +100,9 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     });
                 }
             }
-        } catch (e) {}
+        } catch (e) {
+            console.error(`Extraction error on ${cand.rawSlug}:`, e);
+        }
         return servers;
     });
 
