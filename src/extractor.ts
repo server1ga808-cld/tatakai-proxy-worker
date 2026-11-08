@@ -82,22 +82,24 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     if (prequelSlug === cand.rawSlug) {
                         offset = aniMeta.immediatePrequelEpisodes;
                     } else {
-                        // Case 2: Different slug → RealBaseName Comparison (যেমন Bleach Part 2)
+                        // Case 2: Different slug → RealBaseName Comparison
                         const prequelInfo = await getInfo(prequelSlug);
                         if (prequelInfo.realBaseName && realBaseName) {
                             
-                            // ১. যদি হুবহু একই বেস নেম হয়
+                            // ১. যদি হুবহু একই বেস নেম হয় (Bleach P2)
                             if (prequelInfo.realBaseName === realBaseName) {
                                 offset = aniMeta.immediatePrequelEpisodes;
                             } else {
-                                // ২. রিসেট সিরিজ ডিটেকশন (যেমন Naruto Shippuden, Dragon Ball Z)
-                                const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
-                                
-                                // 'z' কে আলাদা শব্দ হিসেবে ধরার জন্য Regex (যাতে Zom 100 বা Zoids বাদ পড়ে)
-                                const hasZKeyword = /(^|[-_\s])z($|[-_\s])/i.test(realBaseName);
-                                const isResetSeries = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw)) || hasZKeyword;
-                                
-                                // ৩. যদি রিসেট সিরিজ না হয়, তবেই startsWith চেক করব
+                                // ২. রিসেট সিরিজ ডিটেকশন (Naruto Shippuden, Dragon Ball Z, Boruto)
+                                // লক্ষ্য করুন: 'z' বাদ দেওয়া হয়েছে যাতে Bleach এ ভুল না ধরে
+                                const resetKeywords = [
+                                    'shippuden', 'super', 'gt', 'kai', 'brotherhood',
+                                    'diamond', 'crystal', 'dbs', 'boruto', 'next generations'
+                                ];
+                                const lowerBase = realBaseName.toLowerCase();
+                                const isResetSeries = resetKeywords.some(kw => lowerBase.includes(kw));
+
+                                // ৩. যদি রিসেট সিরিজ না হয়, তবেই prefix match করলে offset যোগ করব
                                 if (!isResetSeries && (
                                     realBaseName.startsWith(prequelInfo.realBaseName) ||
                                     prequelInfo.realBaseName.startsWith(realBaseName)
@@ -174,7 +176,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         ) {
                             const decoded = decodeEmbedId(src.url);
                             servers.push({ 
-                                server: src.server, // অরিজিনাল নামটাই রাখব (যেমন: VMoly (Muse)dub)
+                                server: src.server, 
                                 url: cleanIframeUrl(decoded?.url || src.url), 
                                 source: 'tatakai' 
                             });
