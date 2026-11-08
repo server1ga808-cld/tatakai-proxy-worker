@@ -9,7 +9,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     
     const aniMeta = await getAniListMeta(input.anilist_id);
 
-    // 🎯 Prequel Slug একবার চেক করি (offset ক্যালকুলেশনের জন্য)
+    // 🎯 Prequel Slug একবার চেক করি
     let prequelSlug: string | null = null;
     if (aniMeta?.immediatePrequelTitle) {
         try {
@@ -37,18 +37,16 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Smart Offset Calculation
+            // 🎯 Offset Calculation
             let offset = 0;
-            if (aniMeta?.immediatePrequelTitle && aniMeta.immediatePrequelEpisodes > 0) {
-                // যদি Prequel Slug এবং বর্তমান Slug একই হয় → Combined Season → Offset যুক্ত করব
+            if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
                 if (prequelSlug === cand.rawSlug) {
                     offset = aniMeta.immediatePrequelEpisodes;
                 }
             }
-
             const targetEp = input.episode + offset;
 
-            // ধাপ ১: Info অ্যারে-তে সরাসরি খোঁজা
+            // 🎯 Step 1: Info Episodes array-তে খুঁজি
             let targetEpId = null;
             if (infoEpisodes.length > 0) {
                 const found = infoEpisodes.find((e: any) => {
@@ -62,7 +60,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (found) targetEpId = found.id;
             }
 
-            // ধাপ ২: Blind Watch
+            // 🎯 Step 2: Blind Watch (শুধু targetEp দিয়ে, কোনো input.episode fallback নেই)
             if (!targetEpId) {
                 const basesToTry = [];
                 if (realBaseName) basesToTry.push(realBaseName);
@@ -72,9 +70,21 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 for (const base of basesToTry) {
                     const tryId = `${base}-episode-${targetEp}`;
                     const checkRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${tryId}`, 8000);
+                    
                     if (checkRes.ok) {
                         const checkJson = await checkRes.json();
                         const sources = checkJson?.data?.sources || [];
+                        const responseTitle = checkJson?.data?.title || "";
+                        
+                        // 🎯 Strict Title Verification: returnedEp === targetEp হতে হবে
+                        const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
+                        const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
+                        
+                        if (returnedEp !== null && returnedEp !== targetEp) {
+                            // ভুল এপিসোড, skip
+                            continue;
+                        }
+                        
                         if (sources.length > 0) {
                             targetEpId = tryId;
                             break outerLoop;
@@ -83,7 +93,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // ধাপ ৩: সোর্স এক্সট্রাক্ট
+            // 🎯 Step 3: সোর্স এক্সট্রাক্ট
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
@@ -100,9 +110,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     });
                 }
             }
-        } catch (e) {
-            console.error(`Extraction error on ${cand.rawSlug}:`, e);
-        }
+        } catch (e) {}
         return servers;
     });
 
