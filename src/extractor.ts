@@ -144,16 +144,23 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 5: সোর্স এক্সট্রাক্ট
+            // 🎯 Step 5: সোর্স এক্সট্রাক্ট (🎯 ফিল্টার ফিক্স করা হলো)
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
                     const watchJson = await watchRes.json();
                     (watchJson?.data?.sources || []).forEach((src: any) => {
-                        if (['mirrordub', 'abyssdub', 'vmolydub'].includes(src.server.toLowerCase())) {
+                        const serverName = (src.server || '').toLowerCase();
+                        
+                        // 🎯 .includes() ব্যবহার করা হলো যাতে Mirror, VMoly (Muse) ইত্যাদি সব ধরা পড়ে
+                        if (
+                            serverName.includes('mirror') || 
+                            serverName.includes('abyss') || 
+                            serverName.includes('vmoly')
+                        ) {
                             const decoded = decodeEmbedId(src.url);
                             servers.push({ 
-                                server: src.server, 
+                                server: src.server, // অরিজিনাল নামটাই রাখব (যেমন: VMoly (Muse))
                                 url: cleanIframeUrl(decoded?.url || src.url), 
                                 source: 'tatakai' 
                             });
