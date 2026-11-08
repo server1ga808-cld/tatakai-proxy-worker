@@ -12,7 +12,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            // 🎯 ধাপ ১: Info Endpoint থেকে Data Analysis
             const infoRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/anime/${cand.rawSlug}`, 10000);
             let realBaseName = null;
             let infoEpisodes: any[] = [];
@@ -26,34 +25,27 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ধাপ ২: Smart Candidate Generation (সম্ভাব্য এপিসোড নাম্বারের লিস্ট)
+            // 🎯 Smart Candidate Generation (Offset First, Then Direct)
             let candidateNums: number[] = [];
             
-            // ১. Direct Match (যেমন AoT S2 বা Mugen Train)
-            candidateNums.push(input.episode);
-            
-            // ২. Combined Season (যেমন Demon Slayer S3: 1 + 7 = 8)
+            // ১. Immediate Prequel Offset (সবচেয়ে গুরুত্বপূর্ণ: Demon Slayer S3 = 1+7=8, Bleach P2 = 1+13=14)
             if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
                 candidateNums.push(input.episode + aniMeta.immediatePrequelEpisodes);
             }
             
-            // ৩. Absolute Episode (যেমন Bleach Part 2: 1 + 13 = 14)
-            if (aniMeta?.prequelEpisodes && aniMeta.prequelEpisodes > 0) {
+            // ২. Total Prequel Offset (Bleach P3 = 1+26=27, P4 = 1+39=40)
+            if (aniMeta?.prequelEpisodes && aniMeta.prequelEpisodes > 0 && 
+                aniMeta.prequelEpisodes !== aniMeta.immediatePrequelEpisodes) {
                 candidateNums.push(input.episode + aniMeta.prequelEpisodes);
             }
+            
+            // ৩. Direct Episode (প্রথম সিজন বা অফসেট ফেইল করলে)
+            candidateNums.push(input.episode);
 
-            // ৪. Array Offset (যদি infoEpisodes-এর minEp > 1 হয়)
-            if (infoEpisodes.length > 0) {
-                const minEp = Math.min(...infoEpisodes.map((e: any) => Number(e.number) || 9999));
-                if (minEp > 1) {
-                    candidateNums.push(input.episode + (minEp - 1));
-                }
-            }
-
-            // ডুপ্লিকেট রিমুভ করে প্রায়োরিটি অনুযায়ী সাজানো
+            // ডুপ্লিকেট রিমুভ এবং ফিল্টার
             candidateNums = [...new Set(candidateNums)].filter(n => n > 0);
 
-            // 🎯 ধাপ ৩: প্রথমে Info অ্যারে-তে সরাসরি খোঁজা
+            // 🎯 ধাপ ৩: প্রথমে Info অ্যারে-তে সরাসরি খোঁজা (offset প্রায়োরিটি অনুযায়ী)
             let targetEpId = null;
             for (const epNum of candidateNums) {
                 const found = infoEpisodes.find((e: any) => {
@@ -84,17 +76,17 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         if (checkRes.ok) {
                             const checkJson = await checkRes.json();
                             const responseTitle = checkJson?.data?.title || "";
+                            const sources = checkJson?.data?.sources || [];
                             
-                            // Strict Verification: রেসপন্সের টাইটেলে এপিসোড নাম্বার মিলছে কি না
+                            // Response verification (ভুল এপিসোড ব্লক)
                             const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-                            if (titleMatch) {
+                            if (titleMatch && sources.length > 0) {
                                 const returnedEp = parseInt(titleMatch[1], 10);
                                 if (!candidateNums.includes(returnedEp)) {
-                                    continue; // ভুল এপিসোড, স্কিপ
+                                    continue;
                                 }
                             }
-
-                            const sources = checkJson?.data?.sources || [];
+                            
                             if (sources.length > 0) {
                                 targetEpId = tryId;
                                 break outerLoop;
@@ -104,7 +96,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 ধাপ ৫: সোর্স এক্সট্রাক্ট (যদি API থেকে পাওয়া যায়)
+            // 🎯 ধাপ ৫: সোর্স এক্সট্রাক্ট
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
