@@ -66,5 +66,5 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     });
     
     // 🎯 Top 1 candidates return
-    return Array.from(unique.values()).slice(0, 2);
+    return Array.from(unique.values()).slice(0, 1);
 }
