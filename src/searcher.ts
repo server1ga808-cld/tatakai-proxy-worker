@@ -1,4 +1,4 @@
-import { fetchWithTimeout, getSimilarityScore, isSequelTitle } from './utils';
+import { fetchWithTimeout, getSimilarityScore } from './utils';
 import { ProxyInput } from './types';
 import { getAniListMeta } from './anilist';
 
@@ -14,49 +14,57 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 mainTitle বাদ দেওয়া হলো (কারণ এতে ভুল সিজন ধরা পড়ছিল)
-    const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    // 🎯 Multiple Query Variations (৫টি ভিন্ন কুয়েরি)
+    const queries = new Set<string>();
+    queries.add(titleToUse);
+    queries.add(romajiToUse);
     
-    const queryLower = titleToUse.toLowerCase();
-    const isInputSequel = isSequelTitle(titleToUse, romajiToUse);
+    // ১. Cleaned (কোলন বাদ)
+    const cleaned = titleToUse.replace(/[:]/g, ' ').replace(/\s+/g, ' ').trim();
+    queries.add(cleaned);
+    
+    // ২. Main + Arc (Mugen Train Arc → Demon Slayer Mugen Train)
+    const mainTitle = titleToUse.split(':')[0].trim();
+    const arcPart = titleToUse.split(':').slice(1).join(' ').trim();
+    if (arcPart) {
+        const simplified = arcPart.replace(/\s*arc\s*$/i, '').trim();
+        queries.add(`${mainTitle} ${simplified}`);
+        queries.add(`${mainTitle} ${arcPart}`);
+    }
+    
+    // ৩. Main Title Only (franchise name)
+    if (mainTitle) queries.add(mainTitle);
+    
+    const validQueries = Array.from(queries).filter(q => q && q.length > 2);
 
-    const partKeywords = ['separation', 'conflict', 'calamity', 'ketsubetsu', 'kashin', 'culling game'];
-    const queryHasPart = partKeywords.find(kw => queryLower.includes(kw));
-
-    const searchPromises = queries.map(async (query) => {
-        const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
-
-        if (res.ok) {
+    // 🎯 Parallel Search across all queries
+    const searchPromises = validQueries.map(async (query) => {
+        try {
+            const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
+            if (!res.ok) return;
+            
             const data = await res.json();
             (data?.data?.results || []).forEach((anime: any) => {
-                // 🎯 threshold 30 করা হলো (Mugen Train এর স্কোর কম আসে)
                 const score = getSimilarityScore(query, anime.title);
-                if (score < 30) return;
+                if (score < 25) return; // 🎯 Threshold 25
                 
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
-
-                const apiTitleLower = anime.title.toLowerCase();
-                const isApiSequel = isSequelTitle(anime.title);
                 
-                if (isInputSequel && !isApiSequel) return;
-
-                const apiHasPart = partKeywords.find(kw => apiTitleLower.includes(kw));
-                if (queryHasPart && apiHasPart !== queryHasPart) return;
-                if (!queryHasPart && apiHasPart) return;
-
                 candidates.push({ rawSlug: anime.id, score });
             });
-        }
+        } catch (e) {}
     });
 
     await Promise.allSettled(searchPromises);
 
+    // সর্বোচ্চ স্কোরের ভিত্তিতে সর্ট
     candidates.sort((a, b) => b.score - a.score);
     const unique = new Map();
     candidates.forEach(c => {
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    return Array.from(unique.values()).slice(0, 1); // টপ ১টি
+    // 🎯 Top 2 candidates return
+    return Array.from(unique.values()).slice(0, 2);
 }
