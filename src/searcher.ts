@@ -14,8 +14,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    const mainTitle = titleToUse.split(':')[0].trim();
-    const queries = [titleToUse, romajiToUse, mainTitle].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+    // 🎯 mainTitle বাদ দেওয়া হলো (কারণ এতে ভুল সিজন ধরা পড়ছিল)
+    const queries = [titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
     
     const queryLower = titleToUse.toLowerCase();
     const isInputSequel = isSequelTitle(titleToUse, romajiToUse);
@@ -29,8 +29,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         if (res.ok) {
             const data = await res.json();
             (data?.data?.results || []).forEach((anime: any) => {
+                // 🎯 threshold 30 করা হলো (Mugen Train এর স্কোর কম আসে)
                 const score = getSimilarityScore(query, anime.title);
-                if (score < 55) return;
+                if (score < 30) return;
                 
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
