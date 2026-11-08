@@ -9,7 +9,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     
     const aniMeta = await getAniListMeta(input.anilist_id);
 
-    // 🎯 Prequel Slug একবার চেক করি
+    // 🎯 Prequel Slug বের করি (offset ক্যালকুলেশনের জন্য)
     let prequelSlug: string | null = null;
     if (aniMeta?.immediatePrequelTitle) {
         try {
@@ -37,13 +37,23 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Offset Calculation
+            // 🎯 Three-case Offset Logic
             let offset = 0;
             if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
+                // Case 1: Same slug as prequel → Combined season (Demon Slayer Ent District)
                 if (prequelSlug === cand.rawSlug) {
                     offset = aniMeta.immediatePrequelEpisodes;
                 }
+                // Case 2: realBaseName doesn't contain season/part pattern AND slug != realBaseName
+                // → Continuous numbering (Bleach Part 2)
+                else if (realBaseName && 
+                         !realBaseName.match(/season-\d+|part-\d+|cour-\d+/i) && 
+                         cand.rawSlug !== realBaseName) {
+                    offset = aniMeta.immediatePrequelEpisodes;
+                }
+                // Case 3: Separate entry (AoT S2, Mugen Train) → offset = 0
             }
+
             const targetEp = input.episode + offset;
 
             // 🎯 Step 1: Info Episodes array-তে খুঁজি
@@ -60,7 +70,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (found) targetEpId = found.id;
             }
 
-            // 🎯 Step 2: Blind Watch (শুধু targetEp দিয়ে, কোনো input.episode fallback নেই)
+            // 🎯 Step 2: Blind Watch (শুধু targetEp দিয়ে, কোনো fallback নেই)
             if (!targetEpId) {
                 const basesToTry = [];
                 if (realBaseName) basesToTry.push(realBaseName);
@@ -76,13 +86,12 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const sources = checkJson?.data?.sources || [];
                         const responseTitle = checkJson?.data?.title || "";
                         
-                        // 🎯 Strict Title Verification: returnedEp === targetEp হতে হবে
+                        // 🎯 Strict Title Verification
                         const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
                         const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
                         
                         if (returnedEp !== null && returnedEp !== targetEp) {
-                            // ভুল এপিসোড, skip
-                            continue;
+                            continue; // ভুল এপিসোড, skip
                         }
                         
                         if (sources.length > 0) {
@@ -110,7 +119,9 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     });
                 }
             }
-        } catch (e) {}
+        } catch (e) {
+            console.error(`Extraction error on ${cand.rawSlug}:`, e);
+        }
         return servers;
     });
 
