@@ -29,7 +29,7 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     
     const candidates = new Set<string>();
     
-    // ১. কোলন এবং "Arc" বাদ দিয়ে simplified query
+    // ১. কোলন এবং "Arc" বাদ দিয়ে simplified query
     const cleaned = prequelTitle
         .replace(/:\s*Kimetsu no Yaiba/i, '')
         .replace(/\s+Arc\s*$/i, '')
@@ -44,7 +44,6 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     const mainTitle = prequelTitle.split(':')[0].trim();
     if (mainTitle && mainTitle !== prequelTitle) candidates.add(mainTitle);
     
-    // এক এক করে চেক করা
     for (const q of candidates) {
         if (q.length < 3) continue;
         try {
@@ -86,10 +85,25 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         // Case 2: Different slug → RealBaseName Comparison (যেমন Bleach Part 2)
                         const prequelInfo = await getInfo(prequelSlug);
                         if (prequelInfo.realBaseName && realBaseName) {
-                            if (prequelInfo.realBaseName === realBaseName ||
-                                realBaseName.startsWith(prequelInfo.realBaseName) ||
-                                prequelInfo.realBaseName.startsWith(realBaseName)) {
+                            
+                            // ১. যদি হুবহু একই বেস নেম হয়
+                            if (prequelInfo.realBaseName === realBaseName) {
                                 offset = aniMeta.immediatePrequelEpisodes;
+                            } else {
+                                // ২. রিসেট সিরিজ ডিটেকশন (যেমন Naruto Shippuden, Dragon Ball Z)
+                                const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
+                                
+                                // 'z' কে আলাদা শব্দ হিসেবে ধরার জন্য Regex (যাতে Zom 100 বা Zoids বাদ পড়ে)
+                                const hasZKeyword = /(^|[-_\s])z($|[-_\s])/i.test(realBaseName);
+                                const isResetSeries = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw)) || hasZKeyword;
+                                
+                                // ৩. যদি রিসেট সিরিজ না হয়, তবেই startsWith চেক করব
+                                if (!isResetSeries && (
+                                    realBaseName.startsWith(prequelInfo.realBaseName) ||
+                                    prequelInfo.realBaseName.startsWith(realBaseName)
+                                )) {
+                                    offset = aniMeta.immediatePrequelEpisodes;
+                                }
                             }
                         }
                     }
@@ -144,7 +158,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 5: সোর্স এক্সট্রাক্ট (🎯 ফিল্টার ফিক্স করা হলো)
+            // 🎯 Step 5: সোর্স এক্সট্রাক্ট
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
@@ -152,7 +166,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                     (watchJson?.data?.sources || []).forEach((src: any) => {
                         const serverName = (src.server || '').toLowerCase();
                         
-                        // 🎯 .includes() ব্যবহার করা হলো যাতে Mirror, VMoly (Muse) ইত্যাদি সব ধরা পড়ে
+                        // 🎯 Mirror, Abyss, VMoly (Muse) সব ধরার জন্য .includes() ব্যবহার
                         if (
                             serverName.includes('mirror') || 
                             serverName.includes('abyss') || 
@@ -160,7 +174,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         ) {
                             const decoded = decodeEmbedId(src.url);
                             servers.push({ 
-                                server: src.server, // অরিজিনাল নামটাই রাখব (যেমন: VMoly (Muse))
+                                server: src.server, // অরিজিনাল নামটাই রাখব (যেমন: VMoly (Muse)dub)
                                 url: cleanIframeUrl(decoded?.url || src.url), 
                                 source: 'tatakai' 
                             });
