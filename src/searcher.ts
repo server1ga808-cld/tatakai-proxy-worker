@@ -14,31 +14,16 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 Multiple Query Variations (৫টি ভিন্ন কুয়েরি)
-    const queries = new Set<string>();
-    queries.add(titleToUse);
-    queries.add(romajiToUse);
+    // 🎯 Cleaned title: "Kimetsu no Yaiba" এবং "Arc" বাদ
+    const cleanedTitle = titleToUse
+        .replace(/:\s*Kimetsu no Yaiba/i, '')
+        .replace(/\s+Arc\s*$/i, '')
+        .replace(/\s+\(TV\)\s*$/i, '')
+        .trim();
     
-    // ১. Cleaned (কোলন বাদ)
-    const cleaned = titleToUse.replace(/[:]/g, ' ').replace(/\s+/g, ' ').trim();
-    queries.add(cleaned);
-    
-    // ২. Main + Arc (Mugen Train Arc → Demon Slayer Mugen Train)
-    const mainTitle = titleToUse.split(':')[0].trim();
-    const arcPart = titleToUse.split(':').slice(1).join(' ').trim();
-    if (arcPart) {
-        const simplified = arcPart.replace(/\s*arc\s*$/i, '').trim();
-        queries.add(`${mainTitle} ${simplified}`);
-        queries.add(`${mainTitle} ${arcPart}`);
-    }
-    
-    // ৩. Main Title Only (franchise name)
-    if (mainTitle) queries.add(mainTitle);
-    
-    const validQueries = Array.from(queries).filter(q => q && q.length > 2);
+    const queries = [cleanedTitle, titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
 
-    // 🎯 Parallel Search across all queries
-    const searchPromises = validQueries.map(async (query) => {
+    const searchPromises = queries.map(async (query) => {
         try {
             const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
             if (!res.ok) return;
@@ -46,7 +31,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const data = await res.json();
             (data?.data?.results || []).forEach((anime: any) => {
                 const score = getSimilarityScore(query, anime.title);
-                if (score < 25) return; // 🎯 Threshold 25
+                if (score < 25) return;
                 
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
@@ -65,6 +50,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    // 🎯 Top 1 candidates return
+    // 🎯 শুধুমাত্র Top 1 (মিক্সিং বন্ধ)
     return Array.from(unique.values()).slice(0, 1);
 }
