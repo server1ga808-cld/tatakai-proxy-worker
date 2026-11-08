@@ -65,6 +65,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    // 🎯 Top 2 candidates return
-    return Array.from(unique.values()).slice(0, 2);
+    // 🎯 Top 1 candidates return
+    return Array.from(unique.values()).slice(0, 1);
 }
