@@ -9,15 +9,16 @@ export interface AniListMeta {
     seasonsBefore: number;
     prequelEpisodes: number;
     prequelYear: number;
-    immediatePrequelTitle: string; // 🎯 নতুন: আগের সিজনের নাম
-    immediatePrequelEpisodes: number; // 🎯 নতুন: আগের সিজনের এপিসোড
+    immediatePrequelTitle: string;
+    immediatePrequelEpisodes: number;
+    synonyms: string[]; // 🎯 নতুন ফিল্ড
 }
 
 async function fetchMedia(id: number) {
     const query = `
     query ($id: Int) {
       Media(id: $id) {
-        format startDate { year } seasonYear title { english romaji } episodes
+        format startDate { year } seasonYear title { english romaji } episodes synonyms
         relations {
           edges {
             relationType
@@ -95,7 +96,8 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         prequelEpisodes,
         prequelYear,
         immediatePrequelTitle,
-        immediatePrequelEpisodes
+        immediatePrequelEpisodes,
+        synonyms: media.synonyms || [] // 🎯 AniList থেকে Synonyms নেওয়া হলো
     };
 
     cache.set(anilistId, { data: meta, expiry: now + 5 * 60 * 1000 });
