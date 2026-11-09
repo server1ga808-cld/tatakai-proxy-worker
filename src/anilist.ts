@@ -1,5 +1,7 @@
 const ANILIST_PROXY_URL = "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql";
-const cache = new Map<number, { data: any, expiry: number }>();
+// 🎯 ক্যাশে ভার্সন যোগ করা হলো (যাতে কোড আপডেট করলে পুরনো ক্যাশ বাতিল হয়)
+const CACHE_VERSION = "v6"; 
+const cache = new Map<string, { data: any, expiry: number }>();
 
 export interface AniListMeta {
     format: string;
@@ -11,7 +13,7 @@ export interface AniListMeta {
     prequelYear: number;
     immediatePrequelTitle: string;
     immediatePrequelEpisodes: number;
-    synonyms: string[]; // 🎯 নতুন ফিল্ড
+    synonyms: string[]; 
 }
 
 async function fetchMedia(id: number) {
@@ -44,8 +46,10 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
     if (!anilistId) return null;
 
     const now = Date.now();
-    if (cache.has(anilistId)) {
-        const cached = cache.get(anilistId)!;
+    const cacheKey = `${CACHE_VERSION}-${anilistId}`;
+    
+    if (cache.has(cacheKey)) {
+        const cached = cache.get(cacheKey)!;
         if (now < cached.expiry) return cached.data;
     }
 
@@ -97,9 +101,9 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
         prequelYear,
         immediatePrequelTitle,
         immediatePrequelEpisodes,
-        synonyms: media.synonyms || [] // 🎯 AniList থেকে Synonyms নেওয়া হলো
+        synonyms: media.synonyms || [] 
     };
 
-    cache.set(anilistId, { data: meta, expiry: now + 5 * 60 * 1000 });
+    cache.set(cacheKey, { data: meta, expiry: now + 5 * 60 * 1000 });
     return meta;
 }
