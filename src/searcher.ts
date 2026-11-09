@@ -20,8 +20,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         .replace(/\s+Arc\s*$/i, '')
         .replace(/\s+\(TV\)\s*$/i, '')
         .trim();
-    
-    const queries = [cleanedTitle, titleToUse, romajiToUse].filter((q, i, arr) => q && arr.indexOf(q) === i) as string[];
+
+    // 🎯 Synonyms (সর্বোচ্চ ৩টি) এবং মূল টাইটেল মিলিয়ে কুয়েরি তৈরি
+    const synonyms = (aniMeta?.synonyms || []).slice(0, 3);
+    const queries = [...new Set([cleanedTitle, titleToUse, romajiToUse, ...synonyms])]
+        .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
 
     const searchPromises = queries.map(async (query) => {
         try {
@@ -35,6 +38,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
+
+                const apiTitleLower = anime.title.toLowerCase();
+                
+                // 🎯 Strict Season Filtering: S1 চাইলে S2/S3 ব্লক করব
+                // (কিন্তু Demon Slayer-এর মতো মার্জড সিজনের ক্ষেত্রে S3 চাইলে S2 পাস হবে)
+                if (input.season === 1) {
+                    const hasHigherSeason = /season[\s-]*[2-9]|(\d+)(?:st|nd|rd|th)[\s-]*season/i.test(apiTitleLower) || /season-[2-9]/i.test(anime.id.toLowerCase());
+                    if (hasHigherSeason) return; // S2/S3 ব্লক
+                }
                 
                 candidates.push({ rawSlug: anime.id, score });
             });
