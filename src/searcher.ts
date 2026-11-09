@@ -14,17 +14,34 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // Clean title
-    const cleanedTitle = titleToUse.replace(/:\s*Kimetsu no Yaiba/i, '').replace(/\s+Arc\s*$/i, '').replace(/\s+\(TV\)\s*$/i, '').trim();
+    // 🎯 rawQueries তৈরি (Title + Romaji + Synonyms)
+    const rawQueries = [
+        titleToUse,
+        romajiToUse,
+        ...(aniMeta?.synonyms || [])
+    ];
 
-    // 🎯 Synonyms এবং মূল টাইটেল মিলিয়ে কুয়েরি তৈরি (সর্বোচ্চ ৫টি)
-    const synonyms = (aniMeta?.synonyms || []).slice(0, 5);
-    const queries = [...new Set([cleanedTitle, titleToUse, romajiToUse, ...synonyms])]
-        .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
-
+    const queries = new Set<string>();
+    rawQueries.forEach(q => {
+        if (!q || q.length < 3) return;
+        queries.add(q);
+        
+        // ১. কোলনের আগের অংশ (যেমন: "Shingeki no Kyojin" থেকে "Shingeki no Kyojin")
+        const clean = q.split(':')[0].trim();
+        if (clean.length > 2) queries.add(clean);
+        
+        // ২. "Season X", "Part X", "Final Season" বাদ দেওয়া (যেমন: "Attack on Titan: The Final Season Part 2" থেকে "Attack on Titan")
+        const stripped = q
+            .replace(/\b(the\s+)?(final\s+)?season\s*\d+.*/i, '')
+            .replace(/\bpart\s*\d+.*/i, '')
+            .trim();
+        if (stripped.length > 2) queries.add(stripped);
+    });
+    
+    const finalQueries = Array.from(queries);
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
 
-    const searchPromises = queries.map(async (query) => {
+    const searchPromises = finalQueries.map(async (query) => {
         try {
             const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
             if (!res.ok) return;
@@ -40,13 +57,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // 🎯 পারফেক্ট সিজন ফিল্টার
+                // 🎯 সিজন ফিল্টার
                 if (isInputSequel) {
-                    // সিক্যুয়েল হলে সিজন ১ ব্লক (তবে "Final" থাকলে ব্লক করব না)
                     if (/\bseason 1\b/i.test(apiTitleLower) && !animeIdLower.includes('final')) return;
                     if (/season-1$/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
                 } else {
-                    // সিজন ১ হলে সিজন ২+ ব্লক (তবে "Final" বা "Entertainment" থাকলে ব্লক করব না)
                     if (/\bseason [2-9]\b/i.test(apiTitleLower) && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) return;
                     if (/season-[2-9]/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
                 }
