@@ -14,9 +14,18 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 কুয়েরি লিমিট: সর্বোচ্চ ৩টি (মূল, রোমাজি, এবং ১টি সিনোনিম)
-    const synonyms = (aniMeta?.synonyms || []).slice(0, 1); 
-    const queries = [...new Set([titleToUse, romajiToUse, ...synonyms])]
+    // 🎯 Cleaned title: কোলন এবং "Arc" বাদ (Demon Slayer-এর জন্য জরুরি)
+    const cleanedTitle = titleToUse
+        .replace(/:\s*Kimetsu no Yaiba/i, '')
+        .replace(/\s+Arc\s*$/i, '')
+        .replace(/\s+\(TV\)\s*$/i, '')
+        .trim();
+    
+    // 🎯 Synonyms (সর্বোচ্চ ২টি, যাতে Render API-তে বেশি রিকোয়েস্ট না যায়)
+    const synonyms = (aniMeta?.synonyms || []).slice(0, 2);
+    
+    // 🎯 মূল কুয়েরি সেট
+    const queries = [...new Set([cleanedTitle, titleToUse, romajiToUse, ...synonyms])]
         .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
 
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
@@ -37,7 +46,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // সিজন ফিল্টার
+                // 🎯 সিজন ফিল্টার (Demon Slayer-এর মার্জড সিজন এবং AoT Final Season ব্লক করবে না)
                 if (isInputSequel) {
                     if (/\bseason 1\b/i.test(apiTitleLower) && !animeIdLower.includes('final')) return;
                     if (/season-1$/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
