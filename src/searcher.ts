@@ -14,34 +14,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 rawQueries তৈরি (Title + Romaji + Synonyms)
-    const rawQueries = [
-        titleToUse,
-        romajiToUse,
-        ...(aniMeta?.synonyms || [])
-    ];
+    // 🎯 কুয়েরি লিমিট: সর্বোচ্চ ৩টি (মূল, রোমাজি, এবং ১টি সিনোনিম)
+    const synonyms = (aniMeta?.synonyms || []).slice(0, 1); 
+    const queries = [...new Set([titleToUse, romajiToUse, ...synonyms])]
+        .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
 
-    const queries = new Set<string>();
-    rawQueries.forEach(q => {
-        if (!q || q.length < 3) return;
-        queries.add(q);
-        
-        // ১. কোলনের আগের অংশ (যেমন: "Shingeki no Kyojin" থেকে "Shingeki no Kyojin")
-        const clean = q.split(':')[0].trim();
-        if (clean.length > 2) queries.add(clean);
-        
-        // ২. "Season X", "Part X", "Final Season" বাদ দেওয়া (যেমন: "Attack on Titan: The Final Season Part 2" থেকে "Attack on Titan")
-        const stripped = q
-            .replace(/\b(the\s+)?(final\s+)?season\s*\d+.*/i, '')
-            .replace(/\bpart\s*\d+.*/i, '')
-            .trim();
-        if (stripped.length > 2) queries.add(stripped);
-    });
-    
-    const finalQueries = Array.from(queries);
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
 
-    const searchPromises = finalQueries.map(async (query) => {
+    const searchPromises = queries.map(async (query) => {
         try {
             const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
             if (!res.ok) return;
@@ -57,7 +37,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // 🎯 সিজন ফিল্টার
+                // সিজন ফিল্টার
                 if (isInputSequel) {
                     if (/\bseason 1\b/i.test(apiTitleLower) && !animeIdLower.includes('final')) return;
                     if (/season-1$/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
