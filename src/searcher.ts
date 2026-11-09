@@ -14,19 +14,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 Cleaned title: "Kimetsu no Yaiba" এবং "Arc" বাদ
-    const cleanedTitle = titleToUse
-        .replace(/:\s*Kimetsu no Yaiba/i, '')
-        .replace(/\s+Arc\s*$/i, '')
-        .replace(/\s+\(TV\)\s*$/i, '')
-        .trim();
+    // Clean title
+    const cleanedTitle = titleToUse.replace(/:\s*Kimetsu no Yaiba/i, '').replace(/\s+Arc\s*$/i, '').replace(/\s+\(TV\)\s*$/i, '').trim();
 
-    // 🎯 Synonyms (সর্বোচ্চ ৩টি) এবং মূল টাইটেল মিলিয়ে কুয়েরি তৈরি
-    const synonyms = (aniMeta?.synonyms || []).slice(0, 3);
+    // 🎯 Synonyms এবং মূল টাইটেল মিলিয়ে কুয়েরি তৈরি (সর্বোচ্চ ৫টি)
+    const synonyms = (aniMeta?.synonyms || []).slice(0, 5);
     const queries = [...new Set([cleanedTitle, titleToUse, romajiToUse, ...synonyms])]
         .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
 
-    // 🎯 নতুন সিজন লজিক: ইনপুট অ্যানিমেটি সিক্যুয়েল কি না?
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
 
     const searchPromises = queries.map(async (query) => {
@@ -45,15 +40,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // 🎯 পারফেক্ট সিজন ম্যাচিং
+                // 🎯 পারফেক্ট সিজন ফিল্টার
                 if (isInputSequel) {
-                    // যদি ইনপুট সিক্যুয়েল হয়, তবে সিজন ১ ব্লক করব
-                    // (তবে "Season 1" নামে কিছু থাকলে ব্লক করব না, যদি সেটা আসলে সিক্যুয়েলের অংশ না হয়)
+                    // সিক্যুয়েল হলে সিজন ১ ব্লক (তবে "Final" থাকলে ব্লক করব না)
                     if (/\bseason 1\b/i.test(apiTitleLower) && !animeIdLower.includes('final')) return;
                     if (/season-1$/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
                 } else {
-                    // যদি ইনপুট সিজন ১ হয়, তবে সিজন ২+ ব্লক করব
-                    // (কিন্তু AoT Final Season বা Demon Slayer Ent District বাদ পড়বে না)
+                    // সিজন ১ হলে সিজন ২+ ব্লক (তবে "Final" বা "Entertainment" থাকলে ব্লক করব না)
                     if (/\bseason [2-9]\b/i.test(apiTitleLower) && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) return;
                     if (/season-[2-9]/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
                 }
@@ -65,13 +58,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
     await Promise.allSettled(searchPromises);
 
-    // সর্বোচ্চ স্কোরের ভিত্তিতে সর্ট
     candidates.sort((a, b) => b.score - a.score);
     const unique = new Map();
     candidates.forEach(c => {
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    // 🎯 শুধুমাত্র Top 1 (মিক্সিং বন্ধ)
     return Array.from(unique.values()).slice(0, 1);
 }
