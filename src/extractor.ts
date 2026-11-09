@@ -5,7 +5,6 @@ import { getAniListMeta } from './anilist';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
-// 🎯 Helper 1: Info থেকে realBaseName এবং episodes বের করা
 async function getInfo(slug: string): Promise<{ realBaseName: string | null; episodes: any[] }> {
     try {
         const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, 8000);
@@ -23,7 +22,6 @@ async function getInfo(slug: string): Promise<{ realBaseName: string | null; epi
     return { realBaseName: null, episodes: [] };
 }
 
-// 🎯 Helper 2: Prequel Slug খোঁজা
 async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     if (!prequelTitle) return null;
     const candidates = new Set<string>();
@@ -47,7 +45,6 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     return null;
 }
 
-// 🎯 Helper 3: Boundary Probe (শুধুমাত্র AniList ফেইল করলে ব্যবহার হবে)
 async function probeFirstEpisode(realBaseName: string): Promise<number> {
     try {
         const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${realBaseName}-episode-1`, 8000);
@@ -57,7 +54,6 @@ async function probeFirstEpisode(realBaseName: string): Promise<number> {
             const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
             if (match) {
                 const epNum = parseInt(match[1], 10);
-                // 🎯 Sanity Check: ১ম এপিসোডে ভুল করে ১০০ আসলে সেটা রিজেক্ট করব (৫০ এর বেশি অফসেট মানেই ভুল)
                 if (epNum > 1 && epNum <= 50) {
                     return epNum - 1; 
                 }
@@ -76,7 +72,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            // 🎯 Step 1: Info এবং Prequel Info প্যারালালি আনা
             const currentInfo = await getInfo(cand.rawSlug);
             const realBaseName = currentInfo.realBaseName;
             const infoEpisodes = currentInfo.episodes;
@@ -89,14 +84,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (prequelSlug) prequelInfo = await getInfo(prequelSlug);
             }
 
-            // 🎯 Step 2: AniList ভিত্তিক প্রাথমিক অফসেট ক্যালকুলেশন
+            // AniList based offset
             let anilistOffset = 0;
             if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
                 if (prequelSlug === cand.rawSlug) {
-                    anilistOffset = aniMeta.immediatePrequelEpisodes; // Combined (Ent District)
+                    anilistOffset = aniMeta.immediatePrequelEpisodes;
                 } else if (prequelInfo?.realBaseName && realBaseName) {
                     if (prequelInfo.realBaseName === realBaseName) {
-                        anilistOffset = aniMeta.immediatePrequelEpisodes; // Exact base match (Bleach P2)
+                        anilistOffset = aniMeta.immediatePrequelEpisodes;
                     } else {
                         const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
                         const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
@@ -108,16 +103,23 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 3: Boundary Probe (শুধুমাত্র AniList সম্পূর্ণ ফেইল করলে)
+            // 🎯 Boundary Probe Verification
             let finalOffset = anilistOffset;
-            
-            if (!aniMeta && realBaseName) {
-                finalOffset = await probeFirstEpisode(realBaseName);
+            if (realBaseName) {
+                const probedOffset = await probeFirstEpisode(realBaseName);
+                
+                // AniList says 0, Probe says > 0 -> Use Probe
+                if (finalOffset === 0 && probedOffset > 0) {
+                    finalOffset = probedOffset;
+                }
+                // AniList says > 0, Probe says 0 -> Use 0 (Fixes Oshi no Ko)
+                else if (finalOffset > 0 && probedOffset === 0) {
+                    finalOffset = 0;
+                }
             }
 
             const targetEp = input.episode + finalOffset;
 
-            // 🎯 Step 4: প্রথমে Info-তে খোঁজা
             let targetEpId: string | null = null;
             if (infoEpisodes.length > 0) {
                 const found = infoEpisodes.find((e: any) => {
@@ -131,7 +133,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (found) targetEpId = found.id;
             }
 
-            // 🎯 Step 5: Blind Watch (যদি Info-তে না পাই)
             if (!targetEpId) {
                 const basesToTry: string[] = [];
                 if (realBaseName) basesToTry.push(realBaseName);
@@ -151,7 +152,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
                         
                         if (returnedEp !== null && returnedEp !== targetEp) {
-                            continue; // ভুল এপিসোড, skip
+                            continue;
                         }
                         
                         if (sources.length > 0) {
@@ -162,7 +163,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 6: সোর্স এক্সট্রাক্ট
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
