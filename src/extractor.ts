@@ -23,24 +23,13 @@ async function getInfo(slug: string): Promise<{ realBaseName: string | null; epi
     return { realBaseName: null, episodes: [] };
 }
 
-// 🎯 Helper 2: Prequel Slug খোঁজা (cleaned query দিয়ে)
+// 🎯 Helper 2: Prequel Slug খোঁজা
 async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     if (!prequelTitle) return null;
-    
     const candidates = new Set<string>();
-    
-    // ১. কোলন এবং "Arc" বাদ দিয়ে simplified query
-    const cleaned = prequelTitle
-        .replace(/:\s*Kimetsu no Yaiba/i, '')
-        .replace(/\s+Arc\s*$/i, '')
-        .replace(/\s+\(TV\)\s*$/i, '')
-        .trim();
+    const cleaned = prequelTitle.replace(/:\s*Kimetsu no Yaiba/i, '').replace(/\s+Arc\s*$/i, '').replace(/\s+\(TV\)\s*$/i, '').trim();
     if (cleaned && cleaned !== prequelTitle) candidates.add(cleaned);
-    
-    // ২. অরিজিনাল টাইটেল
     candidates.add(prequelTitle);
-    
-    // ৩. মেইন টাইটেল (কোলনের আগের অংশ)
     const mainTitle = prequelTitle.split(':')[0].trim();
     if (mainTitle && mainTitle !== prequelTitle) candidates.add(mainTitle);
     
@@ -58,6 +47,23 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     return null;
 }
 
+// 🎯 Helper 3: Boundary Probe (ওয়েবসাইটের ১ম এপিসোড চেক করা)
+async function probeFirstEpisode(realBaseName: string): Promise<number> {
+    try {
+        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${realBaseName}-episode-1`, 8000);
+        if (res.ok) {
+            const json = await res.json();
+            const title = json?.data?.title || "";
+            const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
+            if (match) {
+                const epNum = parseInt(match[1], 10);
+                return epNum > 1 ? epNum - 1 : 0; // যদি "Episode 8" আসে, তবে offset = 7
+            }
+        }
+    } catch (e) {}
+    return 0; // ডিফল্ট ০
+}
+
 export async function extractStreams(candidates: Candidate[], input: ProxyInput) {
     let finalServers: any[] = [];
     let seenUrls = new Set<string>();
@@ -67,54 +73,49 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const extractionPromises = candidates.map(async (cand) => {
         let servers: any[] = [];
         try {
-            // 🎯 Step 1: বর্তমান স্লাগের Info
+            // 🎯 Step 1: Info এবং Prequel Info প্যারালালি আনা
             const currentInfo = await getInfo(cand.rawSlug);
             const realBaseName = currentInfo.realBaseName;
             const infoEpisodes = currentInfo.episodes;
 
-            // 🎯 Step 2: Smart Offset ক্যালকুলেশন
-            let offset = 0;
-            if (aniMeta?.immediatePrequelTitle && (aniMeta.immediatePrequelEpisodes || 0) > 0) {
-                const prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
-                
-                if (prequelSlug) {
-                    // Case 1: Same slug (Combined Season - যেমন Demon Slayer S2+S3)
-                    if (prequelSlug === cand.rawSlug) {
-                        offset = aniMeta.immediatePrequelEpisodes;
-                    } else {
-                        // Case 2: Different slug → RealBaseName Comparison
-                        const prequelInfo = await getInfo(prequelSlug);
-                        if (prequelInfo.realBaseName && realBaseName) {
-                            
-                            // ১. যদি হুবহু একই বেস নেম হয় (Bleach P2)
-                            if (prequelInfo.realBaseName === realBaseName) {
-                                offset = aniMeta.immediatePrequelEpisodes;
-                            } else {
-                                // ২. রিসেট সিরিজ ডিটেকশন (Naruto Shippuden, Dragon Ball Z, Boruto)
-                                // লক্ষ্য করুন: 'z' বাদ দেওয়া হয়েছে যাতে Bleach এ ভুল না ধরে
-                                const resetKeywords = [
-                                    'shippuden', 'super', 'gt', 'kai', 'brotherhood',
-                                    'diamond', 'crystal', 'dbs', 'boruto', 'next generations'
-                                ];
-                                const lowerBase = realBaseName.toLowerCase();
-                                const isResetSeries = resetKeywords.some(kw => lowerBase.includes(kw));
+            let prequelSlug: string | null = null;
+            let prequelInfo: any = null;
 
-                                // ৩. যদি রিসেট সিরিজ না হয়, তবেই prefix match করলে offset যোগ করব
-                                if (!isResetSeries && (
-                                    realBaseName.startsWith(prequelInfo.realBaseName) ||
-                                    prequelInfo.realBaseName.startsWith(realBaseName)
-                                )) {
-                                    offset = aniMeta.immediatePrequelEpisodes;
-                                }
-                            }
+            if (aniMeta?.immediatePrequelTitle) {
+                prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
+                if (prequelSlug) prequelInfo = await getInfo(prequelSlug);
+            }
+
+            // 🎯 Step 2: AniList ভিত্তিক প্রাথমিক অফসেট ক্যালকুলেশন
+            let anilistOffset = 0;
+            if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
+                if (prequelSlug === cand.rawSlug) {
+                    anilistOffset = aniMeta.immediatePrequelEpisodes; // Combined (Ent District)
+                } else if (prequelInfo?.realBaseName && realBaseName) {
+                    if (prequelInfo.realBaseName === realBaseName) {
+                        anilistOffset = aniMeta.immediatePrequelEpisodes; // Exact base match (Bleach P2)
+                    } else {
+                        const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
+                        const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
+                        
+                        if (!isReset && (realBaseName.startsWith(prequelInfo.realBaseName) || prequelInfo.realBaseName.startsWith(realBaseName))) {
+                            anilistOffset = aniMeta.immediatePrequelEpisodes;
                         }
                     }
                 }
             }
 
-            const targetEp = input.episode + offset;
+            // 🎯 Step 3: Boundary Probe (AniList ফেইল করলে বা কনফার্ম করতে)
+            let finalOffset = anilistOffset;
+            
+            // যদি AniList অফসেট ০ হয়, তবে ওয়েবসাইটের ১ম এপিসোড চেক করি
+            if (finalOffset === 0 && realBaseName) {
+                finalOffset = await probeFirstEpisode(realBaseName);
+            }
 
-            // 🎯 Step 3: প্রথমে Info-তে খোঁজা
+            const targetEp = input.episode + finalOffset;
+
+            // 🎯 Step 4: প্রথমে Info-তে খোঁজা
             let targetEpId: string | null = null;
             if (infoEpisodes.length > 0) {
                 const found = infoEpisodes.find((e: any) => {
@@ -128,7 +129,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (found) targetEpId = found.id;
             }
 
-            // 🎯 Step 4: Blind Watch (যদি Info-তে না পাই)
+            // 🎯 Step 5: Blind Watch (যদি Info-তে না পাই)
             if (!targetEpId) {
                 const basesToTry: string[] = [];
                 if (realBaseName) basesToTry.push(realBaseName);
@@ -144,10 +145,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const sources = checkJson?.data?.sources || [];
                         const responseTitle = checkJson?.data?.title || "";
                         
-                        // Strict Verification: response-এর এপিসোড নাম্বার targetEp-এর সাথে মিলতে হবে
                         const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
                         const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
                         
+                        // Strict Verification: response-এর এপিসোড নাম্বার targetEp-এর সাথে মিলতে হবে
                         if (returnedEp !== null && returnedEp !== targetEp) {
                             continue; // ভুল এপিসোড, skip
                         }
@@ -160,20 +161,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 5: সোর্স এক্সট্রাক্ট
+            // 🎯 Step 6: সোর্স এক্সট্রাক্ট
             if (targetEpId) {
                 const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
                     const watchJson = await watchRes.json();
                     (watchJson?.data?.sources || []).forEach((src: any) => {
                         const serverName = (src.server || '').toLowerCase();
-                        
-                        // 🎯 Mirror, Abyss, VMoly (Muse) সব ধরার জন্য .includes() ব্যবহার
-                        if (
-                            serverName.includes('mirror') || 
-                            serverName.includes('abyss') || 
-                            serverName.includes('vmoly')
-                        ) {
+                        if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
                             const decoded = decodeEmbedId(src.url);
                             servers.push({ 
                                 server: src.server, 
