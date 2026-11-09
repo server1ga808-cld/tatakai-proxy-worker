@@ -45,24 +45,6 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     return null;
 }
 
-async function probeFirstEpisode(realBaseName: string): Promise<number> {
-    try {
-        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${realBaseName}-episode-1`, 8000);
-        if (res.ok) {
-            const json = await res.json();
-            const title = json?.data?.title || "";
-            const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-            if (match) {
-                const epNum = parseInt(match[1], 10);
-                if (epNum > 1 && epNum <= 50) {
-                    return epNum - 1; 
-                }
-            }
-        }
-    } catch (e) {}
-    return 0; 
-}
-
 export async function extractStreams(candidates: Candidate[], input: ProxyInput) {
     let finalServers: any[] = [];
     let seenUrls = new Set<string>();
@@ -84,90 +66,45 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (prequelSlug) prequelInfo = await getInfo(prequelSlug);
             }
 
-            let anilistOffset = 0;
+            // 🎯 Smart Offset Calculation
+            let offset = 0;
             if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
-                if (prequelSlug === cand.rawSlug) {
-                    anilistOffset = aniMeta.immediatePrequelEpisodes;
-                } else if (prequelInfo?.realBaseName && realBaseName) {
-                    if (prequelInfo.realBaseName === realBaseName) {
-                        anilistOffset = aniMeta.immediatePrequelEpisodes;
-                    } else {
-                        const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
-                        const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
-                        
-                        if (!isReset && (realBaseName.startsWith(prequelInfo.realBaseName) || prequelInfo.realBaseName.startsWith(realBaseName))) {
-                            anilistOffset = aniMeta.immediatePrequelEpisodes;
-                        }
-                    }
+                // যদি আগের সিজনের স্লাগ এবং বর্তমান স্লাগ একই হয় (Bleach P2, AoT S4 P2)
+                if (prequelInfo?.realBaseName && realBaseName && prequelInfo.realBaseName === realBaseName) {
+                    offset = aniMeta.immediatePrequelEpisodes;
                 }
             }
 
-            // 🎯 Boundary Probe ONLY if AniList completely failed
-            let finalOffset = anilistOffset;
-            if (!aniMeta && realBaseName) {
-                finalOffset = await probeFirstEpisode(realBaseName);
-            }
+            const targetEp = input.episode + offset;
 
-            const targetEp = input.episode + finalOffset;
+            // 🎯 Blind Watch (Render API-র Pagination বাইপাস)
+            const basesToTry: string[] = [];
+            if (realBaseName) basesToTry.push(realBaseName);
+            if (!basesToTry.includes(cand.rawSlug)) basesToTry.push(cand.rawSlug);
 
-            let targetEpId: string | null = null;
-            if (infoEpisodes.length > 0) {
-                const found = infoEpisodes.find((e: any) => {
-                    let idEpNum = -1;
-                    if (e.id) {
-                        const m = String(e.id).match(/episode-(\d+)/i);
-                        if (m) idEpNum = parseInt(m[1], 10);
+            outerLoop:
+            for (const base of basesToTry) {
+                const tryId = `${base}-episode-${targetEp}`;
+                const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
+                
+                if (checkRes.ok) {
+                    const checkJson = await checkRes.json();
+                    const sources = checkJson?.data?.sources || [];
+                    if (sources.length > 0) {
+                        // সোর্স এক্সট্রাক্ট
+                        sources.forEach((src: any) => {
+                            const serverName = (src.server || '').toLowerCase();
+                            if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
+                                const decoded = decodeEmbedId(src.url);
+                                servers.push({ 
+                                    server: src.server, 
+                                    url: cleanIframeUrl(decoded?.url || src.url), 
+                                    source: 'tatakai' 
+                                });
+                            }
+                        });
+                        if (servers.length > 0) break outerLoop;
                     }
-                    return Number(e.number) === targetEp || idEpNum === targetEp;
-                });
-                if (found) targetEpId = found.id;
-            }
-
-            if (!targetEpId) {
-                const basesToTry: string[] = [];
-                if (realBaseName) basesToTry.push(realBaseName);
-                if (!basesToTry.includes(cand.rawSlug)) basesToTry.push(cand.rawSlug);
-
-                outerLoop:
-                for (const base of basesToTry) {
-                    const tryId = `${base}-episode-${targetEp}`;
-                    const checkRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
-                    
-                    if (checkRes.ok) {
-                        const checkJson = await checkRes.json();
-                        const sources = checkJson?.data?.sources || [];
-                        const responseTitle = checkJson?.data?.title || "";
-                        
-                        const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-                        const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
-                        
-                        if (returnedEp !== null && returnedEp !== targetEp) {
-                            continue;
-                        }
-                        
-                        if (sources.length > 0) {
-                            targetEpId = tryId;
-                            break outerLoop;
-                        }
-                    }
-                }
-            }
-
-            if (targetEpId) {
-                const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
-                if (watchRes.ok) {
-                    const watchJson = await watchRes.json();
-                    (watchJson?.data?.sources || []).forEach((src: any) => {
-                        const serverName = (src.server || '').toLowerCase();
-                        if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
-                            const decoded = decodeEmbedId(src.url);
-                            servers.push({ 
-                                server: src.server, 
-                                url: cleanIframeUrl(decoded?.url || src.url), 
-                                source: 'tatakai' 
-                            });
-                        }
-                    });
                 }
             }
         } catch (e) {
