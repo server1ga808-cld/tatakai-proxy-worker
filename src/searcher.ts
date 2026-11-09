@@ -14,11 +14,26 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // 🎯 শুধুমাত্র ২টি কুয়েরি (স্পিড বাড়াতে)
-    const queries = [...new Set([romajiToUse, titleToUse])]
-        .filter(q => q && q.length > 2) as string[];
+    // 🎯 Root Title Extraction (Season, Part, Final Season বাদ দিয়ে)
+    const getRootTitle = (title: string) => {
+        return title
+            .replace(/:\s*Kimetsu no Yaiba/i, '') 
+            .replace(/\s+Arc\s*$/i, '') 
+            .replace(/\s+\(TV\)\s*$/i, '')
+            .replace(/:\s*(the\s+)?final\s+season.*/i, '') 
+            .replace(/\s+(the\s+)?final\s+season.*/i, '')
+            .replace(/\s+season\s+\d+.*/i, '')
+            .replace(/\s+part\s+\d+.*/i, '')
+            .trim();
+    };
 
-    // 🎯 সিজন ডিটেকশন (Fixed Regex)
+    const rootTitleEng = getRootTitle(titleToUse);
+    const rootTitleRomaji = getRootTitle(romajiToUse);
+    
+    // 🎯 শুধুমাত্র English + Romaji + Root Titles
+    const queries = [...new Set([titleToUse, romajiToUse, rootTitleEng, rootTitleRomaji])]
+        .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
+
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const isInputSeasonOne = !isInputSequel && (input.season || 1) === 1;
 
@@ -30,7 +45,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
             const data = await res.json();
             (data?.data?.results || []).forEach((anime: any) => {
                 const score = getSimilarityScore(query, anime.title);
-                if (score < 25) return;
+                if (score < 20) return;
                 
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
@@ -38,15 +53,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // 🎯 Fixed: "Season 2", "2nd Season", "3rd Season" সবই ধরবে
+                // 🎯 Strict Season Filter
                 const hasHigherSeason = 
                     /\b(season|s)\s*[2-9]\b/i.test(apiTitleLower) ||
                     /\b[2-9](?:nd|rd|th)\s+season\b/i.test(apiTitleLower) ||
-                    /(?:season-|s-|\d)(?:[2-9])-?season/i.test(animeIdLower) ||
+                    /season-[2-9]/i.test(animeIdLower) ||
                     /-[2-9](?:nd|rd|th)-season/i.test(animeIdLower);
 
                 if (isInputSeasonOne && hasHigherSeason) {
-                    // S1 চাইলে S2+ ব্লক, তবে "final" বা "entertainment" বাদ
                     if (!apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) {
                         return;
                     }
