@@ -84,7 +84,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 if (prequelSlug) prequelInfo = await getInfo(prequelSlug);
             }
 
-            // AniList based offset
             let anilistOffset = 0;
             if (aniMeta?.immediatePrequelEpisodes && aniMeta.immediatePrequelEpisodes > 0) {
                 if (prequelSlug === cand.rawSlug) {
@@ -103,19 +102,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Boundary Probe Verification
+            // 🎯 Boundary Probe ONLY if AniList completely failed
             let finalOffset = anilistOffset;
-            if (realBaseName) {
-                const probedOffset = await probeFirstEpisode(realBaseName);
-                
-                // AniList says 0, Probe says > 0 -> Use Probe
-                if (finalOffset === 0 && probedOffset > 0) {
-                    finalOffset = probedOffset;
-                }
-                // AniList says > 0, Probe says 0 -> Use 0 (Fixes Oshi no Ko)
-                else if (finalOffset > 0 && probedOffset === 0) {
-                    finalOffset = 0;
-                }
+            if (!aniMeta && realBaseName) {
+                finalOffset = await probeFirstEpisode(realBaseName);
             }
 
             const targetEp = input.episode + finalOffset;
