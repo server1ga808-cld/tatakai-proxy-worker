@@ -1,6 +1,5 @@
 const ANILIST_PROXY_URL = "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql";
-// 🎯 ক্যাশে ভার্সন আপডেট করা হলো (পুরনো ক্যাশ বাতিল করতে)
-const CACHE_VERSION = "v7"; 
+const CACHE_VERSION = "v8"; 
 const cache = new Map<string, { data: any, expiry: number }>();
 
 export interface AniListMeta {
@@ -13,7 +12,7 @@ export interface AniListMeta {
     prequelYear: number;
     immediatePrequelTitle: string;
     immediatePrequelEpisodes: number;
-    synonyms: string[];
+    synonyms: string[]; 
 }
 
 async function fetchMedia(id: number) {
