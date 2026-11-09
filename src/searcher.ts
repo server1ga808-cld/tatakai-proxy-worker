@@ -26,6 +26,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const queries = [...new Set([cleanedTitle, titleToUse, romajiToUse, ...synonyms])]
         .filter((q, i, arr) => q && q.length > 2 && arr.indexOf(q) === i) as string[];
 
+    // 🎯 নতুন সিজন লজিক: ইনপুট অ্যানিমেটি সিক্যুয়েল কি না?
+    const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
+
     const searchPromises = queries.map(async (query) => {
         try {
             const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
@@ -40,14 +43,21 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 if (!input.is_movie && anime.type === 'MOVIE') return;
 
                 const apiTitleLower = anime.title.toLowerCase();
+                const animeIdLower = anime.id.toLowerCase();
                 
-                // 🎯 Strict Season Filtering: S1 চাইলে S2/S3 ব্লক করব
-                // (কিন্তু Demon Slayer-এর মতো মার্জড সিজনের ক্ষেত্রে S3 চাইলে S2 পাস হবে)
-                if (input.season === 1) {
-                    const hasHigherSeason = /season[\s-]*[2-9]|(\d+)(?:st|nd|rd|th)[\s-]*season/i.test(apiTitleLower) || /season-[2-9]/i.test(anime.id.toLowerCase());
-                    if (hasHigherSeason) return; // S2/S3 ব্লক
+                // 🎯 পারফেক্ট সিজন ম্যাচিং
+                if (isInputSequel) {
+                    // যদি ইনপুট সিক্যুয়েল হয়, তবে সিজন ১ ব্লক করব
+                    // (তবে "Season 1" নামে কিছু থাকলে ব্লক করব না, যদি সেটা আসলে সিক্যুয়েলের অংশ না হয়)
+                    if (/\bseason 1\b/i.test(apiTitleLower) && !animeIdLower.includes('final')) return;
+                    if (/season-1$/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
+                } else {
+                    // যদি ইনপুট সিজন ১ হয়, তবে সিজন ২+ ব্লক করব
+                    // (কিন্তু AoT Final Season বা Demon Slayer Ent District বাদ পড়বে না)
+                    if (/\bseason [2-9]\b/i.test(apiTitleLower) && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) return;
+                    if (/season-[2-9]/i.test(animeIdLower) && !animeIdLower.includes('final')) return;
                 }
-                
+
                 candidates.push({ rawSlug: anime.id, score });
             });
         } catch (e) {}
