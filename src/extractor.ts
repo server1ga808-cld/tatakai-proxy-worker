@@ -47,7 +47,7 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
     return null;
 }
 
-// 🎯 Helper 3: Boundary Probe (ওয়েবসাইটের ১ম এপিসোড চেক করা)
+// 🎯 Helper 3: Boundary Probe (শুধুমাত্র AniList ফেইল করলে ব্যবহার হবে)
 async function probeFirstEpisode(realBaseName: string): Promise<number> {
     try {
         const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${realBaseName}-episode-1`, 8000);
@@ -57,11 +57,14 @@ async function probeFirstEpisode(realBaseName: string): Promise<number> {
             const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
             if (match) {
                 const epNum = parseInt(match[1], 10);
-                return epNum > 1 ? epNum - 1 : 0; // যদি "Episode 8" আসে, তবে offset = 7
+                // 🎯 Sanity Check: ১ম এপিসোডে ভুল করে ১০০ আসলে সেটা রিজেক্ট করব (৫০ এর বেশি অফসেট মানেই ভুল)
+                if (epNum > 1 && epNum <= 50) {
+                    return epNum - 1; 
+                }
             }
         }
     } catch (e) {}
-    return 0; // ডিফল্ট ০
+    return 0; 
 }
 
 export async function extractStreams(candidates: Candidate[], input: ProxyInput) {
@@ -105,11 +108,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 3: Boundary Probe (AniList ফেইল করলে বা কনফার্ম করতে)
+            // 🎯 Step 3: Boundary Probe (শুধুমাত্র AniList সম্পূর্ণ ফেইল করলে)
             let finalOffset = anilistOffset;
             
-            // যদি AniList অফসেট ০ হয়, তবে ওয়েবসাইটের ১ম এপিসোড চেক করি
-            if (finalOffset === 0 && realBaseName) {
+            if (!aniMeta && realBaseName) {
                 finalOffset = await probeFirstEpisode(realBaseName);
             }
 
@@ -148,7 +150,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
                         const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
                         
-                        // Strict Verification: response-এর এপিসোড নাম্বার targetEp-এর সাথে মিলতে হবে
                         if (returnedEp !== null && returnedEp !== targetEp) {
                             continue; // ভুল এপিসোড, skip
                         }
