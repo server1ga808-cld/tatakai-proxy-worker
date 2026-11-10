@@ -66,45 +66,52 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         const realBaseName = currentInfo.realBaseName;
         const derivedBaseName = currentInfo.derivedBaseName;
 
-        // Build bases list (dedupe)
         const bases: string[] = [];
         if (derivedBaseName) bases.push(derivedBaseName);
         if (realBaseName && !bases.includes(realBaseName)) bases.push(realBaseName);
         if (!bases.includes(cand.rawSlug)) bases.push(cand.rawSlug);
 
-        // Reset series detection
+        // 🎯 ১. Reset Series Detection
         const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
         const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
 
-        // Get prequel slug (for merge detection)
+        // 🎯 ২. Prequel Check
         let prequelSlug: string | null = null;
         if (!isReset && aniMeta?.immediatePrequelTitle) {
             prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
         }
-
-        // Detect merged type via prequel slug comparison
-        const isMerged = !isReset && prequelSlug !== null && prequelSlug === cand.rawSlug;
         
         const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
-        // Build episode numbers priority list
-        let epNumbers: number[];
+        // 🎯 ৩. Arc Keyword Detection (Title থেকে বোঝা)
+        const arcKeywords = [
+            'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
+            'hashira', 'training', 'separation', 'conflict', 
+            'ketsubetsu', 'kashin', 'culling game', 'final season', 
+            'part 2', 'part 3', 'the final'
+        ];
+        const inputTitleLower = (input.title + ' ' + (input.romaji_title || '')).toLowerCase();
+        const isArcTitle = arcKeywords.some(kw => inputTitleLower.includes(kw));
+
+        // 🎯 ৪. Dynamic Episode Priority Logic
+        let epNumbers: number[] = [];
+        
         if (isReset) {
-            // Reset series (Naruto Shippuden) - try direct only
+            // Naruto Shippuden
             epNumbers = [input.episode];
-        } else if (isMerged) {
-            // Merged (Bleach P2, Demon Slayer Ent, AoT S4 P2) - offset first
-            epNumbers = [input.episode + prequelEps, input.episode];
+        } else if (prequelEps > 0 && (isArcTitle || prequelSlug === cand.rawSlug)) {
+            // Demon Slayer Ent District, Bleach P2, AoT S4 P2 (Force Offset)
+            epNumbers = [input.episode + prequelEps];
         } else if (prequelEps > 0) {
-            // Standard sequel (AoT S2, JJK S2) - try direct, then offset
+            // AoT S2, JJK S2 (Try Direct, then Offset)
             epNumbers = [input.episode, input.episode + prequelEps];
         } else {
-            // Season 1 (Frieren, One Piece)
+            // Frieren S1, One Piece
             epNumbers = [input.episode];
         }
         epNumbers = [...new Set(epNumbers)];
 
-        // Try each combination
+        // 🎯 ৫. Try Watch
         outerLoop:
         for (const epNum of epNumbers) {
             for (const base of bases) {
