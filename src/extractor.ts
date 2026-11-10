@@ -20,44 +20,44 @@ async function getInfo(slug: string) {
             return { realBaseName, derivedBaseName, episodes };
         }
     } catch (e) {}
-    return { realBaseName: null as string | null, derivedBaseName: null as string | null, episodes: [] as any[] };
+    return { realBaseName: null, derivedBaseName: null, episodes: [] as any[] };
 }
 
-async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
-    if (!prequelTitle) return null;
+async function probeWatch(base: string, epNum: number) {
     try {
-        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(prequelTitle)}`, 8000);
+        const tryId = `${base}-episode-${epNum}`;
+        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
+        if (!res.ok) return null;
+        const json = await res.json();
+        const sources = json?.data?.sources || [];
+        return sources.length > 0 ? sources : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function probeMovieSlug(slug: string) {
+    try {
+        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${slug}`, 8000);
         if (res.ok) {
-            const data = await res.json();
-            const results = data?.data?.results || [];
-            if (results.length > 0) return results[0].id;
+            const json = await res.json();
+            const sources = json?.data?.sources || [];
+            return sources.length > 0 ? sources : null;
         }
     } catch (e) {}
     return null;
 }
 
-async function tryWatch(base: string, epNum: number) {
-    try {
-        const tryId = `${base}-episode-${epNum}`;
-        console.log(`[EXTRACT] tryWatch: ${tryId}`);
-        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
-        if (!res.ok) {
-            console.log(`[EXTRACT] ${tryId} → HTTP ${res.status}`);
-            return null;
+function collectSources(sources: any[], finalServers: any[], seenUrls: Set<string>) {
+    for (const src of sources) {
+        const name = (src.server || '').toLowerCase();
+        if (!name.includes('mirror') && !name.includes('abyss') && !name.includes('vmoly')) continue;
+        const decoded = decodeEmbedId(src.url);
+        const url = cleanIframeUrl(decoded?.url || src.url);
+        if (!seenUrls.has(url)) {
+            seenUrls.add(url);
+            finalServers.push({ server: src.server, url, source: 'tatakai' });
         }
-        const json = await res.json();
-        const title = json?.data?.title || "";
-        const sources = json?.data?.sources || [];
-        console.log(`[EXTRACT] ${tryId} → title="${title}" sources=${sources.length}`);
-        if (sources.length === 0) return null;
-        const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-        if (match && parseInt(match[1], 10) !== epNum) {
-            console.log(`[EXTRACT] ${tryId} → TITLE MISMATCH (expected ${epNum}, got ${match[1]})`);
-            return null;
-        }
-        return sources;
-    } catch (e) {
-        return null;
     }
 }
 
@@ -66,110 +66,73 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
-    console.log(`[EXTRACT] aniMeta:`, aniMeta ? { prequelEps: aniMeta.prequelEpisodes, immPrequelEps: aniMeta.immediatePrequelEpisodes, immPrequelTitle: aniMeta.immediatePrequelTitle } : 'NULL');
+    const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
+
+    // 🎯 Step 1: Determine if this is a continuation-type title
+    const titleBlob = (input.title + ' ' + (input.romaji_title || '')).toLowerCase();
+    const isContinuation = /(?:part\s*\d+|final\s*season|arc|cour\s*\d+|season\s*[2-9]|\b(?:2nd|3rd|4th|5th|6th|7th|8th|9th)\s*season)/i.test(titleBlob);
+
+    console.log(`[EXTRACT] prequelEps=${prequelEps} isContinuation=${isContinuation}`);
 
     for (const cand of candidates) {
-        console.log(`[EXTRACT] ========== Processing: ${cand.rawSlug} ==========`);
-        
+        // 🎯 MOVIE HANDLING
         if (input.is_movie) {
-            try {
-                console.log(`[EXTRACT] MOVIE: tryWatch: ${cand.rawSlug}`);
-                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${cand.rawSlug}`, 8000);
-                if (res.ok) {
-                    const json = await res.json();
-                    const sources = json?.data?.sources || [];
-                    console.log(`[EXTRACT] MOVIE ${cand.rawSlug} → sources=${sources.length}`);
-                    if (sources.length > 0) {
-                        sources.forEach((src: any) => {
-                            const serverName = (src.server || '').toLowerCase();
-                            if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
-                                const decoded = decodeEmbedId(src.url);
-                                const url = cleanIframeUrl(decoded?.url || src.url);
-                                if (!seenUrls.has(url)) {
-                                    seenUrls.add(url);
-                                    finalServers.push({ server: src.server, url, source: 'tatakai' });
-                                }
-                            }
-                        });
-                    }
-                }
-            } catch (e) {}
-            if (finalServers.length > 0) break;
+            const sources = await probeMovieSlug(cand.rawSlug);
+            if (sources) {
+                collectSources(sources, finalServers, seenUrls);
+                if (finalServers.length > 0) return finalServers;
+            }
             continue;
         }
 
-        const currentInfo = await getInfo(cand.rawSlug);
-        console.log(`[EXTRACT] realBaseName="${currentInfo.realBaseName}" derivedBaseName="${currentInfo.derivedBaseName}" episodes=${currentInfo.episodes.length}`);
-        
-        if (!currentInfo.realBaseName) continue;
+        // 🎯 GET INFO
+        const info = await getInfo(cand.rawSlug);
+        if (!info.realBaseName) continue;
 
-        const realBaseName = currentInfo.realBaseName;
-        const derivedBaseName = currentInfo.derivedBaseName;
-        const infoEpisodes = currentInfo.episodes;
+        // 🎯 Compute minEp
+        let minEp = Infinity;
+        for (const e of info.episodes) {
+            const n = Number(e.number);
+            if (!isNaN(n) && n < minEp) minEp = n;
+        }
+        console.log(`[EXTRACT] slug=${cand.rawSlug} minEp=${minEp}`);
 
+        // 🎯 Build bases (in priority order)
         const bases: string[] = [];
-        if (derivedBaseName) bases.push(derivedBaseName);
-        if (realBaseName && !bases.includes(realBaseName)) bases.push(realBaseName);
+        if (info.realBaseName) bases.push(info.realBaseName);
+        if (info.derivedBaseName && !bases.includes(info.derivedBaseName)) bases.push(info.derivedBaseName);
         if (!bases.includes(cand.rawSlug)) bases.push(cand.rawSlug);
-        console.log(`[EXTRACT] bases:`, bases);
 
-        const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
-        const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
-
-        let prequelSlug: string | null = null;
-        if (!isReset && aniMeta?.immediatePrequelTitle) {
-            prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
-        }
-        console.log(`[EXTRACT] isReset=${isReset} prequelSlug=${prequelSlug}`);
-        
-        const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
-
-        let minEp = 9999;
-        for (const e of infoEpisodes) {
-            const num = Number(e.number);
-            if (!isNaN(num) && num < minEp) minEp = num;
-        }
-        console.log(`[EXTRACT] prequelEps=${prequelEps} minEp=${minEp}`);
-
-        let epNumbers: number[] = [];
-        
-        if (isReset) {
-            epNumbers = [input.episode];
-        } else if (prequelEps > 0 && (prequelSlug === cand.rawSlug || minEp > 1)) {
-            epNumbers = [input.episode + prequelEps, input.episode];
-        } else if (prequelEps > 0) {
-            epNumbers = [input.episode, input.episode + prequelEps];
+        // 🎯 Determine Episode Candidates
+        let epCandidates: number[];
+        if (!aniMeta || prequelEps === 0) {
+            // S1 of a franchise (Frieren, One Piece, Oshi no Ko S1)
+            epCandidates = [input.episode];
+        } else if (isContinuation) {
+            // Continuation (AoT S4 P2, Bleach P2, Demon Slayer Ent District)
+            epCandidates = [input.episode + prequelEps, input.episode];
+        } else if (minEp > 1) {
+            // Info shows high episodes → continuous numbering (JJK S2)
+            epCandidates = [input.episode + prequelEps, input.episode];
         } else {
-            epNumbers = [input.episode];
+            // Restart series (Naruto Shippuden, AoT S2)
+            epCandidates = [input.episode, input.episode + prequelEps];
         }
-        epNumbers = [...new Set(epNumbers)];
-        console.log(`[EXTRACT] epNumbers:`, epNumbers);
+        epCandidates = [...new Set(epCandidates.filter(e => e > 0))];
+        console.log(`[EXTRACT] epCandidates=`, epCandidates);
 
-        outerLoop:
-        for (const epNum of epNumbers) {
-            for (const base of bases) {
-                const sources = await tryWatch(base, epNum);
-                if (sources && sources.length > 0) {
-                    console.log(`[EXTRACT] SUCCESS with ${base}-episode-${epNum}`);
-                    sources.forEach((src: any) => {
-                        const serverName = (src.server || '').toLowerCase();
-                        if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
-                            const decoded = decodeEmbedId(src.url);
-                            const url = cleanIframeUrl(decoded?.url || src.url);
-                            if (!seenUrls.has(url)) {
-                                seenUrls.add(url);
-                                finalServers.push({ server: src.server, url, source: 'tatakai' });
-                            }
-                        }
-                    });
-                    break outerLoop;
+        // 🎯 Probe each (base, ep) combination
+        for (const base of bases) {
+            for (const ep of epCandidates) {
+                const sources = await probeWatch(base, ep);
+                if (sources) {
+                    console.log(`[EXTRACT] SUCCESS: ${base}-episode-${ep}`);
+                    collectSources(sources, finalServers, seenUrls);
+                    if (finalServers.length > 0) return finalServers;
                 }
             }
         }
-        
-        if (finalServers.length > 0) break;
     }
-    
-    console.log(`[EXTRACT] FINAL SERVERS: ${finalServers.length}`);
+
     return finalServers;
 }
