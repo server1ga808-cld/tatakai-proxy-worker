@@ -39,14 +39,22 @@ async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
 async function tryWatch(base: string, epNum: number) {
     try {
         const tryId = `${base}-episode-${epNum}`;
+        console.log(`[EXTRACT] tryWatch: ${tryId}`);
         const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${tryId}`, 8000);
-        if (!res.ok) return null;
+        if (!res.ok) {
+            console.log(`[EXTRACT] ${tryId} → HTTP ${res.status}`);
+            return null;
+        }
         const json = await res.json();
         const title = json?.data?.title || "";
         const sources = json?.data?.sources || [];
+        console.log(`[EXTRACT] ${tryId} → title="${title}" sources=${sources.length}`);
         if (sources.length === 0) return null;
         const match = title.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
-        if (match && parseInt(match[1], 10) !== epNum) return null;
+        if (match && parseInt(match[1], 10) !== epNum) {
+            console.log(`[EXTRACT] ${tryId} → TITLE MISMATCH (expected ${epNum}, got ${match[1]})`);
+            return null;
+        }
         return sources;
     } catch (e) {
         return null;
@@ -58,15 +66,19 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     let seenUrls = new Set<string>();
     
     const aniMeta = await getAniListMeta(input.anilist_id);
+    console.log(`[EXTRACT] aniMeta:`, aniMeta ? { prequelEps: aniMeta.prequelEpisodes, immPrequelEps: aniMeta.immediatePrequelEpisodes, immPrequelTitle: aniMeta.immediatePrequelTitle } : 'NULL');
 
     for (const cand of candidates) {
-        // 🎯 MOVIE FIX: মুভির জন্য শুধু slug হিট করব (episode suffix ছাড়া)
+        console.log(`[EXTRACT] ========== Processing: ${cand.rawSlug} ==========`);
+        
         if (input.is_movie) {
             try {
+                console.log(`[EXTRACT] MOVIE: tryWatch: ${cand.rawSlug}`);
                 const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${cand.rawSlug}`, 8000);
                 if (res.ok) {
                     const json = await res.json();
                     const sources = json?.data?.sources || [];
+                    console.log(`[EXTRACT] MOVIE ${cand.rawSlug} → sources=${sources.length}`);
                     if (sources.length > 0) {
                         sources.forEach((src: any) => {
                             const serverName = (src.server || '').toLowerCase();
@@ -87,6 +99,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         }
 
         const currentInfo = await getInfo(cand.rawSlug);
+        console.log(`[EXTRACT] realBaseName="${currentInfo.realBaseName}" derivedBaseName="${currentInfo.derivedBaseName}" episodes=${currentInfo.episodes.length}`);
+        
         if (!currentInfo.realBaseName) continue;
 
         const realBaseName = currentInfo.realBaseName;
@@ -97,6 +111,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         if (derivedBaseName) bases.push(derivedBaseName);
         if (realBaseName && !bases.includes(realBaseName)) bases.push(realBaseName);
         if (!bases.includes(cand.rawSlug)) bases.push(cand.rawSlug);
+        console.log(`[EXTRACT] bases:`, bases);
 
         const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
         const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
@@ -105,37 +120,37 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         if (!isReset && aniMeta?.immediatePrequelTitle) {
             prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
         }
+        console.log(`[EXTRACT] isReset=${isReset} prequelSlug=${prequelSlug}`);
         
         const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
-        // 🎯 minEp চেক (Pagination/Offset এর জন্য)
         let minEp = 9999;
         for (const e of infoEpisodes) {
             const num = Number(e.number);
             if (!isNaN(num) && num < minEp) minEp = num;
         }
+        console.log(`[EXTRACT] prequelEps=${prequelEps} minEp=${minEp}`);
 
-        // 🎯 Dynamic Episode Priority Logic
         let epNumbers: number[] = [];
         
         if (isReset) {
             epNumbers = [input.episode];
         } else if (prequelEps > 0 && (prequelSlug === cand.rawSlug || minEp > 1)) {
-            // Combined অথবা Pagination/Offset থাকলে (JJK S2 minEp = 38, Bleach minEp = 4)
             epNumbers = [input.episode + prequelEps, input.episode];
         } else if (prequelEps > 0) {
-            // Standard Sequel (AoT S2 minEp = 1)
             epNumbers = [input.episode, input.episode + prequelEps];
         } else {
             epNumbers = [input.episode];
         }
         epNumbers = [...new Set(epNumbers)];
+        console.log(`[EXTRACT] epNumbers:`, epNumbers);
 
         outerLoop:
         for (const epNum of epNumbers) {
             for (const base of bases) {
                 const sources = await tryWatch(base, epNum);
                 if (sources && sources.length > 0) {
+                    console.log(`[EXTRACT] SUCCESS with ${base}-episode-${epNum}`);
                     sources.forEach((src: any) => {
                         const serverName = (src.server || '').toLowerCase();
                         if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
@@ -155,5 +170,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         if (finalServers.length > 0) break;
     }
     
+    console.log(`[EXTRACT] FINAL SERVERS: ${finalServers.length}`);
     return finalServers;
 }
