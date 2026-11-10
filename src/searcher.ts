@@ -9,6 +9,7 @@ export interface Candidate {
 
 export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
     let candidates: Candidate[] = [];
+    let fallbackCandidates: Candidate[] = [];
     const aniMeta = await getAniListMeta(input.anilist_id);
     
     const titleToUse = aniMeta?.englishTitle || input.title;
@@ -29,8 +30,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const rootTitleEng = getRootTitle(titleToUse);
     const rootTitleRomaji = getRootTitle(romajiToUse);
     
+    // 🎯 FIX 1: Filter non-ASCII synonyms (জাপানিজ/পার্সিয়ান বাদ)
     const synonyms = (aniMeta?.synonyms || [])
         .filter(s => s && s.length > 3 && s.length < 80)
+        .filter(s => /^[a-zA-Z0-9\s\-:.,!?'&()]+$/.test(s))
         .slice(0, 2);
     
     const queryList = [titleToUse, romajiToUse, ...synonyms, rootTitleEng, rootTitleRomaji].filter((q): q is string => Boolean(q && q.length > 2));
@@ -46,7 +49,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const isInputSeasonOne = !isInputSequel && (input.season || 1) === 1;
     
-    const arcKeywords = ['final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 'kashin', 'culling', 'shippuden', 'next generations', 'part', 'cour', 'movie', 'ova', 'oad'];
+    // 🎯 FIX 2: আরও arc keywords যোগ (blood war, thousand-year, brotherhood)
+    const arcKeywords = [
+        'final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
+        'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 
+        'kashin', 'culling', 'shippuden', 'next generations', 'part', 
+        'cour', 'movie', 'ova', 'oad',
+        'blood war', 'blood-war', 'thousand-year', 'thousand year', 'tybw',
+        'brotherhood', 'sisterhood', 'zero', 'arc'
+    ];
     const inputTitleLower = (titleToUse + ' ' + romajiToUse).toLowerCase();
     const isInputArc = arcKeywords.some(kw => inputTitleLower.includes(kw));
 
@@ -85,7 +96,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
 
-                // 🎯 FIX: Sequel চাইলে S1 বা বেস নাম ব্লক
+                // 🎯 Track for fallback (before blocking)
+                fallbackCandidates.push({ rawSlug: anime.id, score: finalScore });
+
+                // Sequel চাইলে S1 বা বেস নাম ব্লক
                 if (isInputSequel && !input.is_movie) {
                     const isS1 = isExplicitSeasonOne;
                     const isBareBase = !hasHigherSeason && !isExplicitSeasonOne && !isInputArc && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment') && !apiTitleLower.includes('arc') && !apiTitleLower.includes('part');
@@ -116,5 +130,18 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    return Array.from(unique.values()).slice(0, 2);
+    let result = Array.from(unique.values()).slice(0, 2);
+    
+    // 🎯 FIX 3: Safety Net (যদি সব ব্লক হয়ে যায়, top fallback দাও)
+    if (result.length === 0 && fallbackCandidates.length > 0) {
+        fallbackCandidates.sort((a, b) => b.score - a.score);
+        const fallbackUnique = new Map();
+        fallbackCandidates.forEach(c => {
+            if (!fallbackUnique.has(c.rawSlug)) fallbackUnique.set(c.rawSlug, c);
+        });
+        result = Array.from(fallbackUnique.values()).slice(0, 1);
+        console.log(`[SEARCH] FALLBACK used (all blocked), returning top candidate`);
+    }
+    
+    return result;
 }
