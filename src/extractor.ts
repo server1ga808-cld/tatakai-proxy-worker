@@ -60,22 +60,47 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     const aniMeta = await getAniListMeta(input.anilist_id);
 
     for (const cand of candidates) {
+        // 🎯 MOVIE FIX: মুভির জন্য শুধু slug হিট করব (episode suffix ছাড়া)
+        if (input.is_movie) {
+            try {
+                const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${cand.rawSlug}`, 8000);
+                if (res.ok) {
+                    const json = await res.json();
+                    const sources = json?.data?.sources || [];
+                    if (sources.length > 0) {
+                        sources.forEach((src: any) => {
+                            const serverName = (src.server || '').toLowerCase();
+                            if (serverName.includes('mirror') || serverName.includes('abyss') || serverName.includes('vmoly')) {
+                                const decoded = decodeEmbedId(src.url);
+                                const url = cleanIframeUrl(decoded?.url || src.url);
+                                if (!seenUrls.has(url)) {
+                                    seenUrls.add(url);
+                                    finalServers.push({ server: src.server, url, source: 'tatakai' });
+                                }
+                            }
+                        });
+                    }
+                }
+            } catch (e) {}
+            if (finalServers.length > 0) break;
+            continue;
+        }
+
         const currentInfo = await getInfo(cand.rawSlug);
         if (!currentInfo.realBaseName) continue;
 
         const realBaseName = currentInfo.realBaseName;
         const derivedBaseName = currentInfo.derivedBaseName;
+        const infoEpisodes = currentInfo.episodes;
 
         const bases: string[] = [];
         if (derivedBaseName) bases.push(derivedBaseName);
         if (realBaseName && !bases.includes(realBaseName)) bases.push(realBaseName);
         if (!bases.includes(cand.rawSlug)) bases.push(cand.rawSlug);
 
-        // 🎯 ১. Reset Series Detection
         const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto', 'next generations'];
         const isReset = resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
 
-        // 🎯 ২. Prequel Check
         let prequelSlug: string | null = null;
         if (!isReset && aniMeta?.immediatePrequelTitle) {
             prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
@@ -83,35 +108,29 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         
         const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
-        // 🎯 ৩. Arc Keyword Detection (Title থেকে বোঝা)
-        const arcKeywords = [
-            'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
-            'hashira', 'training', 'separation', 'conflict', 
-            'ketsubetsu', 'kashin', 'culling game', 'final season', 
-            'part 2', 'part 3', 'the final'
-        ];
-        const inputTitleLower = (input.title + ' ' + (input.romaji_title || '')).toLowerCase();
-        const isArcTitle = arcKeywords.some(kw => inputTitleLower.includes(kw));
+        // 🎯 minEp চেক (Pagination/Offset এর জন্য)
+        let minEp = 9999;
+        for (const e of infoEpisodes) {
+            const num = Number(e.number);
+            if (!isNaN(num) && num < minEp) minEp = num;
+        }
 
-        // 🎯 ৪. Dynamic Episode Priority Logic
+        // 🎯 Dynamic Episode Priority Logic
         let epNumbers: number[] = [];
         
         if (isReset) {
-            // Naruto Shippuden
             epNumbers = [input.episode];
-        } else if (prequelEps > 0 && (isArcTitle || prequelSlug === cand.rawSlug)) {
-            // Demon Slayer Ent District, Bleach P2, AoT S4 P2 (Force Offset)
-            epNumbers = [input.episode + prequelEps];
+        } else if (prequelEps > 0 && (prequelSlug === cand.rawSlug || minEp > 1)) {
+            // Combined অথবা Pagination/Offset থাকলে (JJK S2 minEp = 38, Bleach minEp = 4)
+            epNumbers = [input.episode + prequelEps, input.episode];
         } else if (prequelEps > 0) {
-            // AoT S2, JJK S2 (Try Direct, then Offset)
+            // Standard Sequel (AoT S2 minEp = 1)
             epNumbers = [input.episode, input.episode + prequelEps];
         } else {
-            // Frieren S1, One Piece
             epNumbers = [input.episode];
         }
         epNumbers = [...new Set(epNumbers)];
 
-        // 🎯 ৫. Try Watch
         outerLoop:
         for (const epNum of epNumbers) {
             for (const base of bases) {
