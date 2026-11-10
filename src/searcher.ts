@@ -11,18 +11,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     let candidates: Candidate[] = [];
     const aniMeta = await getAniListMeta(input.anilist_id);
     
-    console.log(`[SEARCH] AniList:`, aniMeta ? { 
-        title: aniMeta.englishTitle, 
-        prequelEps: aniMeta.prequelEpisodes, 
-        synonymsCount: (aniMeta.synonyms || []).length 
-    } : 'NULL');
-    
     const titleToUse = aniMeta?.englishTitle || input.title;
     const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
     
-    // ========================================
-    // 🎯 ১. Root Title Extraction
-    // ========================================
     const getRootTitle = (title: string) => {
         return title
             .replace(/:\s*Kimetsu no Yaiba/i, '') 
@@ -38,73 +29,42 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const rootTitleEng = getRootTitle(titleToUse);
     const rootTitleRomaji = getRootTitle(romajiToUse);
     
-    // ========================================
-    // 🎯 ২. Synonyms (সর্বোচ্চ ২টি - স্পিড বাঁচাতে)
-    // ========================================
     const synonyms = (aniMeta?.synonyms || [])
         .filter(s => s && s.length > 3 && s.length < 80)
         .slice(0, 2);
     
-    // ========================================
-    // 🎯 ৩. Query Priority List
-    // ========================================
-    const queryList = [
-        titleToUse,
-        romajiToUse,
-        ...synonyms,
-        rootTitleEng,
-        rootTitleRomaji,
-    ].filter((q): q is string => Boolean(q && q.length > 2));
+    const queryList = [titleToUse, romajiToUse, ...synonyms, rootTitleEng, rootTitleRomaji].filter((q): q is string => Boolean(q && q.length > 2));
     
     const queries: string[] = [];
     for (const q of queryList) {
         const trimmed = q.trim();
-        const norm = trimmed.toLowerCase();
-        if (trimmed.length > 2 && !queries.some(existing => existing.toLowerCase() === norm)) {
+        if (trimmed.length > 2 && !queries.some(existing => existing.toLowerCase() === trimmed.toLowerCase())) {
             queries.push(trimmed);
         }
     }
-    
-    console.log(`[SEARCH] Queries (${queries.length}):`, queries);
 
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const isInputSeasonOne = !isInputSequel && (input.season || 1) === 1;
     
-    const arcKeywords = [
-        'final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
-        'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 
-        'kashin', 'culling', 'shippuden', 'next generations', 'part', 
-        'cour', 'movie', 'ova', 'oad'
-    ];
+    const arcKeywords = ['final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 'kashin', 'culling', 'shippuden', 'next generations', 'part', 'cour', 'movie', 'ova', 'oad'];
     const inputTitleLower = (titleToUse + ' ' + romajiToUse).toLowerCase();
     const isInputArc = arcKeywords.some(kw => inputTitleLower.includes(kw));
-    
-    console.log(`[SEARCH] isSequel: ${isInputSequel}, isSeasonOne: ${isInputSeasonOne}, isArc: ${isInputArc}, isMovie: ${input.is_movie}`);
 
-    // ========================================
-    // 🎯 ৪. Parallel Search + Dynamic Filtering
-    // ========================================
     const searchPromises = queries.map(async (query, queryIndex) => {
         const specificityBonus = Math.max(0, 10 - queryIndex * 2);
         
         try {
             const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
-            
-            if (!res.ok) {
-                console.log(`[SEARCH] Query "${query}" FAILED (${res.status})`);
-                return;
-            }
+            if (!res.ok) return;
             
             const data = await res.json();
             const results = data?.data?.results || [];
-            console.log(`[SEARCH] "${query}" → ${results.length} results (bonus: +${specificityBonus})`);
             
             results.forEach((anime: any) => {
                 const baseScore = getSimilarityScore(query, anime.title);
                 const apiTitleLower = anime.title.toLowerCase();
                 const animeIdLower = anime.id.toLowerCase();
                 
-                // Enhanced Season Detection
                 const hasHigherSeason = 
                     /\b(season|s)\s*[2-9]\b/i.test(apiTitleLower) ||
                     /\b[2-9](?:nd|rd|th)\s+season\b/i.test(apiTitleLower) ||
@@ -113,7 +73,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                     /\b(second|third|fourth|fifth|sixth)\s+season\b/i.test(apiTitleLower) ||
                     /\b(II|III|IV|V|VI)\s*(?:$|:|\s)/i.test(anime.title);
                 
-                // Season 1 detection (has "season 1" or "1st season" explicitly)
                 const isExplicitSeasonOne = 
                     /\b(season|s)\s*1\b/i.test(apiTitleLower) ||
                     /\b1(?:st)\s+season\b/i.test(apiTitleLower) ||
@@ -121,58 +80,41 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 
                 const finalScore = baseScore + specificityBonus;
                 
-                console.log(`[SEARCH] "${anime.title}" (${anime.id}) | Base: ${baseScore} | Final: ${finalScore} | higherSeason: ${hasHigherSeason} | explicitS1: ${isExplicitSeasonOne}`);
-                
-                // Score threshold
                 if (baseScore < 20) return;
                 
-                // Movie/TV strict check
                 if (input.is_movie && anime.type !== 'MOVIE') return;
                 if (!input.is_movie && anime.type === 'MOVIE') return;
 
-                // 🎯 FIX 1: Sequel চাইলে S1 বা বেস নাম ব্লক (মুভি বাদে)
+                // 🎯 FIX: Sequel চাইলে S1 বা বেস নাম ব্লক
                 if (isInputSequel && !input.is_movie) {
-                    const isBareBaseName = !hasHigherSeason && !isExplicitSeasonOne && !isInputArc;
-                    if (isBareBaseName && 
-                        !apiTitleLower.includes('final') && 
-                        !apiTitleLower.includes('entertainment') &&
-                        !apiTitleLower.includes('arc') &&
-                        !apiTitleLower.includes('part') &&
-                        !apiTitleLower.includes('shippuden')) {
-                        console.log(`[SEARCH] BLOCKED (S1 for Sequel request): "${anime.title}"`);
+                    const isS1 = isExplicitSeasonOne;
+                    const isBareBase = !hasHigherSeason && !isExplicitSeasonOne && !isInputArc && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment') && !apiTitleLower.includes('arc') && !apiTitleLower.includes('part');
+                    
+                    if (isS1 || isBareBase) {
+                        console.log(`[SEARCH] BLOCKED (S1/Bare for Sequel): "${anime.title}"`);
                         return;
                     }
                 }
 
-                // 🎯 FIX 2: Season 1 চাইলে S2+ ব্লক
+                // Season 1 চাইলে S2+ ব্লক
                 if (isInputSeasonOne && hasHigherSeason) {
                     if (!isInputArc && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) {
-                        console.log(`[SEARCH] BLOCKED (S2+ for S1 request): "${anime.title}"`);
                         return;
                     }
                 }
 
                 candidates.push({ rawSlug: anime.id, score: finalScore });
-                console.log(`[SEARCH] ACCEPTED: "${anime.title}" (${anime.id}) | Score: ${finalScore}`);
             });
-        } catch (e: any) {
-            console.log(`[SEARCH] Error on "${query}": ${e.message}`);
-        }
+        } catch (e) {}
     });
 
     await Promise.allSettled(searchPromises);
 
-    // ========================================
-    // 🎯 ৫. Ranking & Return Top 2
-    // ========================================
     candidates.sort((a, b) => b.score - a.score);
     const unique = new Map();
     candidates.forEach(c => {
         if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
     });
     
-    const result = Array.from(unique.values()).slice(0, 2);
-    console.log(`[SEARCH] FINAL RESULT (${result.length}):`, result);
-    
-    return result;
+    return Array.from(unique.values()).slice(0, 2);
 }
