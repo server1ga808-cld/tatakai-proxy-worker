@@ -5,21 +5,23 @@ import { getAniListMeta } from './anilist';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
-async function getInfo(slug: string): Promise<{ realBaseName: string | null; episodes: any[] }> {
+async function getInfo(slug: string): Promise<{ realBaseName: string | null; derivedBaseName: string | null; episodes: any[] }> {
     try {
         const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, 8000);
         if (res.ok) {
             const data = await res.json();
             const episodes = data?.data?.episodes || [];
-            let realBaseName: string | null = null;
+            const realBaseName = data?.data?.realBaseName || slug; // Search slug
+            let derivedBaseName: string | null = null;
+            
             if (episodes.length > 0 && episodes[0].id) {
                 const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
-                if (match) realBaseName = match[1];
+                if (match) derivedBaseName = match[1]; // Actual URL slug
             }
-            return { realBaseName, episodes };
+            return { realBaseName, derivedBaseName, episodes };
         }
     } catch (e) {}
-    return { realBaseName: null, episodes: [] };
+    return { realBaseName: null, derivedBaseName: null, episodes: [] };
 }
 
 async function findPrequelSlug(prequelTitle: string): Promise<string | null> {
@@ -45,47 +47,53 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         let servers: any[] = [];
         try {
             const currentInfo = await getInfo(cand.rawSlug);
-            const realBaseName = currentInfo.realBaseName;
-            const infoEpisodes = currentInfo.episodes;
+            const realBaseName = currentInfo.realBaseName; // "naruto-shippuuden"
+            const derivedBaseName = currentInfo.derivedBaseName; // "kimetsu-no-yaiba-yuukaku-hen-season-2"
 
+            // 🎯 ১. Reset Series ডিটেকশন (Naruto Shippuden)
+            const resetKeywords = ['shippuden', 'super', 'gt', 'kai', 'brotherhood', 'diamond', 'crystal', 'dbs', 'boruto'];
+            const isReset = realBaseName && resetKeywords.some(kw => realBaseName.toLowerCase().includes(kw));
+
+            // 🎯 ২. Prequel Slug এবং Combined Detection (Combined হলে offset প্রযোজ্য)
             let prequelSlug: string | null = null;
             let prequelInfo: any = null;
 
-            if (aniMeta?.immediatePrequelTitle) {
+            if (!isReset && aniMeta?.immediatePrequelTitle) {
                 prequelSlug = await findPrequelSlug(aniMeta.immediatePrequelTitle);
-                if (prequelSlug) prequelInfo = await getInfo(prequelSlug);
+                if (prequelSlug) {
+                    const prequelResult = await getInfo(prequelSlug);
+                    prequelInfo = prequelResult;
+                }
             }
 
-            // 🎯 Step 1: Dynamic Combined Slug Detection
-            const isCombined = 
+            const isCombined = !isReset && (
                 (prequelSlug === cand.rawSlug) || 
-                (prequelInfo?.realBaseName && realBaseName && prequelInfo.realBaseName === realBaseName);
+                (prequelInfo?.derivedBaseName && derivedBaseName && prequelInfo.derivedBaseName === derivedBaseName) ||
+                (prequelInfo?.realBaseName && realBaseName && prequelInfo.realBaseName === realBaseName)
+            );
 
-            // 🎯 Step 2: Try List তৈরি করা
+            // 🎯 ৩. ট্রাই লিস্ট (Combined হলে Offset, নাহলে Direct)
             let epNumbers: number[] = [];
             const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
             if (isCombined) {
-                // Case 1: Combined (AoT S4 P2, Bleach P2, Demon Slayer S3)
                 epNumbers = [input.episode + prequelEps];
-            } else if (prequelEps > 0) {
-                // Case 2: Different Slug with Prequel (AoT S2, JJK S2, Naruto Shippuden)
-                // প্রথমে Direct, তারপর Offset (Direct-এ কাজ করলে Offset-এ যাবে না)
+            } else if (prequelEps > 0 && !isReset) {
                 epNumbers = [input.episode, input.episode + prequelEps];
             } else {
-                // Case 3: Season 1 (Frieren, One Piece, Death Note)
                 epNumbers = [input.episode];
             }
-
-            // ডুপ্লিকেট এপিসোড নাম্বার রিমুভ
             epNumbers = [...new Set(epNumbers)];
 
-            // 🎯 Step 3: Watch URL হিট করা (Verify সহ)
-            let targetEpId: string | null = null;
-            
+            // 🎯 ৪. বেস নেম লিস্ট (realBaseName এবং derivedBaseName দুটোই ট্রাই করব)
             const basesToTry: string[] = [];
             if (realBaseName) basesToTry.push(realBaseName);
+            if (derivedBaseName && !basesToTry.includes(derivedBaseName)) basesToTry.push(derivedBaseName);
             if (!basesToTry.includes(cand.rawSlug)) basesToTry.push(cand.rawSlug);
+
+            // 🎯 ৫. Watch URL হিট করা (Verify সহ)
+            let targetEpId: string | null = null;
+            let isValidResponse = true;
 
             outerLoop:
             for (const epNum of epNumbers) {
@@ -98,12 +106,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                         const sources = checkJson?.data?.sources || [];
                         const responseTitle = checkJson?.data?.title || "";
                         
-                        // Title Verification
                         const titleMatch = responseTitle.match(/(?:episode|ep)\s*0?(\d+)(?!\d)/i);
                         const returnedEp = titleMatch ? parseInt(titleMatch[1], 10) : null;
                         
+                        // API bugged response (যেমন Naruto-তে Episode 100) হলে সেখানেই থামব
                         if (returnedEp !== null && returnedEp !== epNum) {
-                            continue; 
+                            isValidResponse = false;
+                            break outerLoop;
                         }
                         
                         if (sources.length > 0) {
@@ -114,8 +123,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
                 }
             }
 
-            // 🎯 Step 4: সোর্স এক্সট্রাক্ট
-            if (targetEpId) {
+            // 🎯 ৬. সোর্স এক্সট্রাক্ট
+            if (targetEpId && isValidResponse) {
                 const watchRes = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/watch/${targetEpId}`, 8000);
                 if (watchRes.ok) {
                     const watchJson = await watchRes.json();
