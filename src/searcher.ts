@@ -30,7 +30,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const rootTitleEng = getRootTitle(titleToUse);
     const rootTitleRomaji = getRootTitle(romajiToUse);
     
-    // 🎯 FIX 1: Filter non-ASCII synonyms (জাপানিজ/পার্সিয়ান বাদ)
+    // 🎯 FIX 1: Filter non-ASCII synonyms
     const synonyms = (aniMeta?.synonyms || [])
         .filter(s => s && s.length > 3 && s.length < 80)
         .filter(s => /^[a-zA-Z0-9\s\-:.,!?'&()]+$/.test(s))
@@ -49,7 +49,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
     const isInputSeasonOne = !isInputSequel && (input.season || 1) === 1;
     
-    // 🎯 FIX 2: আরও arc keywords যোগ (blood war, thousand-year, brotherhood)
+    // 🎯 FIX 2: Extended arc keywords
     const arcKeywords = [
         'final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
         'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 
@@ -60,6 +60,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     ];
     const inputTitleLower = (titleToUse + ' ' + romajiToUse).toLowerCase();
     const isInputArc = arcKeywords.some(kw => inputTitleLower.includes(kw));
+
+    // 🎯 FIX 4: OVA detection on user input
+    const userWantsOva = /\b(ova|oad|special|specials|ona)\b/i.test(inputTitleLower);
 
     const searchPromises = queries.map(async (query, queryIndex) => {
         const specificityBonus = Math.max(0, 10 - queryIndex * 2);
@@ -99,6 +102,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
                 // 🎯 Track for fallback (before blocking)
                 fallbackCandidates.push({ rawSlug: anime.id, score: finalScore });
 
+                // 🎯 FIX 4: OVA/Special ব্লক (যদি না user চায়)
+                const isOvaKeyword = /\b(ova|oad|special|specials|ona)\b/i.test(apiTitleLower);
+                const isOvaInId = /(?:^|[-_])(ova|oad|special|specials|ona)(?:[-_]|$)/i.test(animeIdLower);
+                
+                if ((isOvaKeyword || isOvaInId) && !userWantsOva) {
+                    console.log(`[SEARCH] BLOCKED (OVA/Special): "${anime.title}" (${anime.id})`);
+                    return;
+                }
+
                 // Sequel চাইলে S1 বা বেস নাম ব্লক
                 if (isInputSequel && !input.is_movie) {
                     const isS1 = isExplicitSeasonOne;
@@ -132,7 +144,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     
     let result = Array.from(unique.values()).slice(0, 2);
     
-    // 🎯 FIX 3: Safety Net (যদি সব ব্লক হয়ে যায়, top fallback দাও)
+    // 🎯 FIX 3: Safety Net
     if (result.length === 0 && fallbackCandidates.length > 0) {
         fallbackCandidates.sort((a, b) => b.score - a.score);
         const fallbackUnique = new Map();
