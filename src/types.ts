@@ -40,18 +40,10 @@ export interface AniListMeta {
   immediatePrequelTitle: string;
   immediatePrequelEpisodes: number;
   synonyms: string[];
-  chain: ChainSeason[];
+  chain?: ChainSeason[];
 }
 
 export interface Candidate {
-  rawSlug: string;         // Desi search slug
-  baseName: string;        // watch URL base
-  offsets: number[];       // ordered offsets to try
+  rawSlug: string;
   score: number;
-  debug: {
-    aniSeason: number;
-    groupSize: number;
-    desiSlug: string;
-    desiTitle: string;
-  };
 }
