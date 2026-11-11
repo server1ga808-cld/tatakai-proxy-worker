@@ -1,7 +1,7 @@
 import type { AniListMeta, ChainSeason } from './types';
 
 const ANILIST_PROXY_URL = "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql";
-const CACHE_VERSION = "v9";
+const CACHE_VERSION = "V10";
 const cache = new Map<string, { data: AniListMeta | null; expiry: number }>();
 
 async function fetchMedia(id: number) {
