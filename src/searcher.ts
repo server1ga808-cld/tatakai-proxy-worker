@@ -40,8 +40,6 @@ async function findBestDesiMatch(chainSeason: ChainSeason, is_movie: boolean): P
                     synonyms: chainSeason.synonyms
                 }, cand.title);
                 
-                console.log(`[SEARCH] "${q}" vs "${cand.title}" (${cand.id}) | Score: ${score.toFixed(1)}`);
-                
                 if (!bestMatch || score > bestMatch.score) {
                     bestMatch = { slug: cand.id, title: cand.title, type: cand.type, score };
                 }
@@ -76,14 +74,14 @@ async function getInfo(slug: string) {
 export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
     const aniMeta = await getAniListMeta(input.anilist_id);
     if (!aniMeta?.chain || aniMeta.chain.length === 0) {
-        console.log(`[SEARCH] No chain available`);
+        console.log(`[SEARCH] No chain`);
         return [];
     }
     
     const chain = aniMeta.chain;
     const targetIdx = chain.findIndex(s => s.anilistId === input.anilist_id);
     if (targetIdx === -1) {
-        console.log(`[SEARCH] Target not found in chain`);
+        console.log(`[SEARCH] Target not in chain`);
         return [];
     }
     
@@ -91,59 +89,49 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     const prequel = targetIdx > 0 ? chain[targetIdx - 1] : null;
     const prequelEps = prequel?.episodes || 0;
     
-    console.log(`[SEARCH] Chain(${chain.length}) → Target: S${target.seasonNumber} "${target.title}" (${target.episodes} eps) prequelEps=${prequelEps}`);
+    console.log(`[SEARCH] Target: S${target.seasonNumber} "${target.title}" (${target.episodes}eps) prequelEps=${prequelEps}`);
     
-    // Find Desi match for target
     const targetMatch = await findBestDesiMatch(target, input.is_movie);
     if (!targetMatch) {
-        console.log(`[SEARCH] No target match found`);
+        console.log(`[SEARCH] No target match`);
         return [];
     }
-    console.log(`[SEARCH] ✓ Target match: "${targetMatch.title}" (${targetMatch.slug}) score=${targetMatch.score.toFixed(1)}`);
+    console.log(`[SEARCH] ✓ Match: "${targetMatch.title}" (${targetMatch.slug}) score=${targetMatch.score.toFixed(1)}`);
     
-    // Get info for baseName
     const info = await getInfo(targetMatch.slug);
     const baseName = info?.derivedBaseName || info?.realBaseName || targetMatch.slug;
+    const targetDerivedBase = info?.derivedBaseName || '';
     
-    // Compute infoMinEp
-    let infoMinEp = 1;
-    if (info?.episodes && info.episodes.length > 0) {
-        const nums = info.episodes
-            .map((e: any) => Number(e.number))
-            .filter(n => !isNaN(n) && n > 0);
-        if (nums.length > 0) infoMinEp = Math.min(...nums);
-    }
-    console.log(`[SEARCH] baseName="${baseName}" infoMinEp=${infoMinEp}`);
-    
-    // 🎯 Merge detection
+    // 🎯 CRITICAL: Merge detection via derivedBaseName equality
     let isMerged = false;
     if (prequel) {
         const prequelMatch = await findBestDesiMatch(prequel, input.is_movie);
-        if (prequelMatch && prequelMatch.slug === targetMatch.slug) {
-            isMerged = true;
-            console.log(`[SEARCH] ✓ Merged with S${prequel.seasonNumber}`);
+        if (prequelMatch) {
+            if (prequelMatch.slug === targetMatch.slug) {
+                isMerged = true;
+                console.log(`[SEARCH] Merged (same slug with S${prequel.seasonNumber})`);
+            } else {
+                const prequelInfo = await getInfo(prequelMatch.slug);
+                const prequelDerivedBase = prequelInfo?.derivedBaseName || '';
+                if (prequelDerivedBase && targetDerivedBase && prequelDerivedBase === targetDerivedBase) {
+                    isMerged = true;
+                    console.log(`[SEARCH] Merged (same derivedBase "${targetDerivedBase}")`);
+                }
+            }
         }
     }
     
-    // 🎯 CRITICAL FIX: Use prequelEps for offset (NOT cumulativeBefore)
-    // Continuous series: infoMinEp >= prequelEps (e.g., Bleach P2: 14>=13, JJK S2: 38>=24, AoT P2: 21>=16)
-    // Reset series: infoMinEp < prequelEps (e.g., AoT S2: 1<25, Bleach P1: 4<366)
-    // Merged: prequelEps first (Demon Slayer Ent: 7)
+    // 🎯 Offsets: merged → prequelEps first; not merged → 0 first
     const offsets: number[] = [];
-    
     if (isMerged) {
         offsets.push(prequelEps, 0);
-    } else if (prequelEps > 0 && infoMinEp >= prequelEps) {
-        // Continuous (Bleach P2, JJK S2, AoT P2)
-        offsets.push(prequelEps, 0);
     } else if (prequelEps > 0) {
-        // Reset (Naruto, AoT S2, Bleach P1)
         offsets.push(0, prequelEps);
     } else {
         offsets.push(0);
     }
     
-    console.log(`[SEARCH] Offsets: [${offsets.join(', ')}]`);
+    console.log(`[SEARCH] isMerged=${isMerged} baseName="${baseName}" offsets=[${offsets.join(', ')}]`);
     
     return [{
         rawSlug: targetMatch.slug,
