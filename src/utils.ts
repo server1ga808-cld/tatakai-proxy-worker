@@ -1,5 +1,14 @@
 import type { DesiSource } from './types';
 
+export function slugify(text: string): string {
+  if (!text) return '';
+  return text
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 function padBase64(str: string): string {
   const pad = str.length % 4;
   return pad ? str + '='.repeat(4 - pad) : str;
@@ -47,16 +56,12 @@ const ROMAN_MAP: Record<string, string> = {
 
 export function normalizeNumeric(text: string): string {
   if (!text) return '';
-  
-  // 🎯 Unicode Diacritics fix (Yūgaku -> Yugaku)
   let s = ' ' + text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/_/g, ' ') + ' ';
-  
   s = s.replace(/\b(\d+)(?:st|nd|rd|th)\s+(season|part|cour)\b/g, ' $2 $1 ');
   s = s.replace(/\b(season|part|cour)\s+(ii|iii|iv|v|vi|vii|viii|ix|x)\b/g, (_, kw, rm) => ` ${kw} ${ROMAN_MAP[rm]} `);
   s = s.replace(/\bs(\d+)\b/g, ' season $1 ');
   s = s.replace(/\bp(\d+)\b/g, ' part $1 ');
   s = s.replace(/\bfinal\s+season\b/g, ' final ');
-  
   return s.replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -95,11 +100,6 @@ export function getSimilarityScore(a: string, b: string): number {
   const jac = wordJaccard(a, b);
   const prefix = prefixBonus(a, b);
   return Math.min(1, (jac * 0.7) + (prefix * 0.3));
-}
-
-export function extractBaseNameFromEpisodeId(episodeId: string): string | null {
-  const match = episodeId.match(/(.+?)-episode-\d+/i);
-  return match ? match[1] : null;
 }
 
 export function getRootTitle(title: string): string {
