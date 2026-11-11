@@ -1,32 +1,35 @@
-import type { ProxyInput, Candidate, DesiSearchResult } from './types';
+import type { ProxyInput, Candidate } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify } from './utils';
+import { fetchWithTimeout, getRootTitle } from './utils';
 
-const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 const DESI_BASE = "https://www.desidubanime.me";
 
-// 🎯 Native Fallback: যদি Tatakai API ফেল করে
-async function searchDesiNative(query: string): Promise<DesiSearchResult[]> {
+async function searchDesiNative(query: string): Promise<Candidate[]> {
   try {
     const url = `${DESI_BASE}/wp-json/kiranime/v1/anime/search?query=${encodeURIComponent(query)}`;
-    const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 8000);
+    const res = await fetchWithTimeout(url, { 
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" } 
+    }, 5000); // ৫ সেকেন্ড টাইমআউট
+
     if (!res.ok) return [];
-    
     const json: any = await res.json();
     const html = json?.result || '';
     
-    // HTML থেকে slug এবং title এক্সট্রাক্ট করা
-    const results: DesiSearchResult[] = [];
-    const regex = /<a href="https:\/\/www\.desidubanime\.me\/anime\/([^/]+)\/".*?<span class="group-data-\[language=jp\]\/body:hidden"[^>]*>([^<]+)<\/span>/gs;
-    
+    // DesiDub HTML থেকে slug বের করার নিখুঁত রেজেক্স
+    const regex = /href="https:\/\/www\.desidubanime\.me\/anime\/([^/]+)\/"/g;
+    const results: Candidate[] = [];
     let match;
+
     while ((match = regex.exec(html)) !== null) {
-      results.push({
-        id: match[1], // slug
-        title: match[2].trim(), // title
-        type: 'TV',
-        url: `${DESI_BASE}/anime/${match[1]}/`
-      });
+      const slug = match[1];
+      if (slug && !results.some(r => r.slug === slug)) {
+        results.push({
+          slug: slug,
+          title: slug.replace(/-/g, ' '), // সাময়িক টাইটেল
+          type: 'TV',
+          score: 1
+        });
+      }
     }
     return results;
   } catch {
@@ -39,80 +42,24 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   
   const titleToUse = aniMeta?.current.title || input.title;
   const romajiToUse = aniMeta?.current.romajiTitle || input.romaji_title || '';
-  const synonyms = aniMeta?.synonyms || [];
-  
-  const romajiSlug = slugify(romajiToUse);
   const rootTitle = getRootTitle(titleToUse);
   
-  const queries = [...new Set([titleToUse, romajiToUse, rootTitle, ...synonyms].filter(q => q && q.length > 2))];
+  // ৩টি কুয়েরি দিয়েই হিট করব
+  const queries = [...new Set([titleToUse, romajiToUse, rootTitle].filter(q => q && q.length > 2))];
 
-  const scoreMap = new Map<string, { cand: DesiSearchResult, score: number, queries: Set<string> }>();
+  // প্যারালালি Native Search চালানো
+  const searchPromises = queries.map(q => searchDesiNative(q));
+  const resultsArr = await Promise.all(searchPromises);
 
-  // ১. Tatakai Search API (Primary)
-  const tatakaiPromises = queries.map(q => 
-    fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(q)}`, {}, 8000)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => ({ query: q, results: data?.data?.results || [] }))
-      .catch(() => ({ query: q, results: [] }))
-  );
-
-  const tatakaiResults = await Promise.all(tatakaiPromises);
-  let hasResults = false;
-
-  for (const { query, results } of tatakaiResults) {
-    if (results.length > 0) hasResults = true;
+  const candidateMap = new Map<string, Candidate>();
+  for (const results of resultsArr) {
     for (const cand of results) {
-      if (!scoreMap.has(cand.id)) {
-        scoreMap.set(cand.id, { cand, score: 0, queries: new Set() });
-      }
-      scoreMap.get(cand.id)!.queries.add(query);
-    }
-  }
-
-  // ২. Tatakai ফেল করলে Desi Native Fallback (Secondary)
-  if (!hasResults) {
-    console.log(`[SEARCH] Tatakai empty, using Desi Native Fallback...`);
-    const nativePromises = queries.map(q => searchDesiNative(q).then(res => ({ query: q, results: res })));
-    const nativeResults = await Promise.all(nativePromises);
-
-    for (const { query, results } of nativeResults) {
-      for (const cand of results) {
-        if (!scoreMap.has(cand.id)) {
-          scoreMap.set(cand.id, { cand, score: 0, queries: new Set() });
-        }
-        scoreMap.get(cand.id)!.queries.add(query);
+      if (!candidateMap.has(cand.slug)) {
+        candidateMap.set(cand.slug, cand);
       }
     }
   }
 
-  if (scoreMap.size === 0) return [];
-
-  const scored: Candidate[] = [];
-  
-  for (const [slug, data] of scoreMap) {
-    if (input.is_movie && data.cand.type.toUpperCase() !== 'MOVIE') continue;
-    if (!input.is_movie && data.cand.type.toUpperCase() === 'MOVIE') continue;
-
-    let score = Math.max(
-      getSimilarityScore(titleToUse, data.cand.title),
-      getSimilarityScore(romajiToUse, data.cand.title),
-      getSimilarityScore(rootTitle, data.cand.title)
-    );
-
-    if (data.queries.has(romajiToUse)) score += 0.5; 
-    if (data.queries.has(titleToUse)) score += 0.3;
-    
-    if (score < 0.2) continue;
-
-    scored.push({
-      slug: slug,
-      title: data.cand.title,
-      type: data.cand.type,
-      score: score,
-      derivedBaseName: romajiSlug // রোমাজি থেকে অটো-জেনারেট করা স্লাগ
-    });
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 3);
+  // সব ক্যান্ডিডেট রিটার্ন করব, এক্সট্র্যাক্টর নিজেই যাচাই করে নেবে
+  return Array.from(candidateMap.values());
 }
