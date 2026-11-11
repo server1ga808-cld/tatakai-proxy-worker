@@ -1,151 +1,148 @@
-import { fetchWithTimeout, getSimilarityScore } from './utils';
-import { ProxyInput } from './types';
+import { fetchWithTimeout, getRootTitle, multiReferenceScore } from './utils';
+import { ProxyInput, ChainSeason, Candidate } from './types';
 import { getAniListMeta } from './anilist';
 
-export interface Candidate {
-    rawSlug: string;
+const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
+
+interface DesiMatch {
+    slug: string;
+    title: string;
+    type: string;
     score: number;
 }
 
-export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
-    let candidates: Candidate[] = [];
-    let fallbackCandidates: Candidate[] = [];
-    const aniMeta = await getAniListMeta(input.anilist_id);
+async function findBestDesiMatch(chainSeason: ChainSeason, is_movie: boolean): Promise<DesiMatch | null> {
+    const queries = [
+        chainSeason.title,
+        chainSeason.romajiTitle,
+        ...chainSeason.synonyms
+    ].filter((q): q is string => Boolean(q && q.length > 2));
     
-    const titleToUse = aniMeta?.englishTitle || input.title;
-    const romajiToUse = aniMeta?.romajiTitle || input.romaji_title || '';
+    const uniqueQueries = [...new Set(queries)];
+    const rootTitle = getRootTitle(chainSeason.title);
     
-    const getRootTitle = (title: string) => {
-        return title
-            .replace(/:\s*Kimetsu no Yaiba/i, '') 
-            .replace(/\s+Arc\s*$/i, '') 
-            .replace(/\s+\(TV\)\s*$/i, '')
-            .replace(/:\s*(the\s+)?final\s+season.*/i, '') 
-            .replace(/\s+(the\s+)?final\s+season.*/i, '')
-            .replace(/\s+season\s+\d+.*/i, '')
-            .replace(/\s+part\s+\d+.*/i, '')
-            .trim();
-    };
+    let bestMatch: DesiMatch | null = null;
+    
+    for (const q of uniqueQueries) {
+        try {
+            const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(q)}`, 8000);
+            if (!res.ok) continue;
+            const data = await res.json();
+            
+            for (const cand of data?.data?.results || []) {
+                if (is_movie && cand.type !== 'MOVIE') continue;
+                if (!is_movie && cand.type === 'MOVIE') continue;
+                
+                const score = multiReferenceScore({
+                    title: chainSeason.title,
+                    romaji: chainSeason.romajiTitle,
+                    rootTitle: rootTitle,
+                    synonyms: chainSeason.synonyms
+                }, cand.title);
+                
+                console.log(`[SEARCH] "${q}" vs "${cand.title}" (${cand.id}) | Score: ${score.toFixed(1)}`);
+                
+                if (!bestMatch || score > bestMatch.score) {
+                    bestMatch = { slug: cand.id, title: cand.title, type: cand.type, score };
+                }
+            }
+        } catch (e) {}
+        
+        if (bestMatch && bestMatch.score >= 60) break;
+    }
+    
+    if (bestMatch && bestMatch.score >= 40) return bestMatch;
+    return null;
+}
 
-    const rootTitleEng = getRootTitle(titleToUse);
-    const rootTitleRomaji = getRootTitle(romajiToUse);
+async function getInfo(slug: string) {
+    try {
+        const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, 8000);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const episodes = data?.data?.episodes || [];
+        const realBaseName = data?.data?.realBaseName || slug;
+        let derivedBaseName: string | null = null;
+        if (episodes.length > 0 && episodes[0].id) {
+            const match = String(episodes[0].id).match(/(.+?)-episode-\d+/i);
+            if (match) derivedBaseName = match[1];
+        }
+        return { realBaseName, derivedBaseName, episodes };
+    } catch (e) {
+        return null;
+    }
+}
+
+export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
+    const aniMeta = await getAniListMeta(input.anilist_id);
+    if (!aniMeta?.chain || aniMeta.chain.length === 0) {
+        console.log(`[SEARCH] No chain available`);
+        return [];
+    }
     
-    const synonyms = (aniMeta?.synonyms || [])
-        .filter(s => s && s.length > 3 && s.length < 80)
-        .filter(s => /^[a-zA-Z0-9\s\-:.,!?'&()]+$/.test(s))
-        .slice(0, 2);
+    const chain = aniMeta.chain;
+    const targetIdx = chain.findIndex(s => s.anilistId === input.anilist_id);
+    if (targetIdx === -1) {
+        console.log(`[SEARCH] Target not found in chain`);
+        return [];
+    }
     
-    const queryList = [titleToUse, romajiToUse, ...synonyms, rootTitleEng, rootTitleRomaji].filter((q): q is string => Boolean(q && q.length > 2));
+    const target = chain[targetIdx];
+    console.log(`[SEARCH] Chain(${chain.length}) → Target: S${target.seasonNumber} "${target.title}" (${target.episodes} eps, cumBefore=${target.cumulativeBefore})`);
     
-    const queries: string[] = [];
-    for (const q of queryList) {
-        const trimmed = q.trim();
-        if (trimmed.length > 2 && !queries.some(existing => existing.toLowerCase() === trimmed.toLowerCase())) {
-            queries.push(trimmed);
+    // 🎯 Phase 2: Find Desi match for target
+    const targetMatch = await findBestDesiMatch(target, input.is_movie);
+    if (!targetMatch) {
+        console.log(`[SEARCH] No target match found`);
+        return [];
+    }
+    console.log(`[SEARCH] ✓ Target match: "${targetMatch.title}" (${targetMatch.slug}) score=${targetMatch.score.toFixed(1)}`);
+    
+    // 🎯 Get info for baseName
+    const info = await getInfo(targetMatch.slug);
+    const baseName = info?.derivedBaseName || info?.realBaseName || targetMatch.slug;
+    const infoMinEp = (info?.episodes && info.episodes.length > 0)
+        ? Math.min(...info.episodes.map((e: any) => Number(e.number) || Infinity))
+        : 1;
+    console.log(`[SEARCH] baseName="${baseName}" infoMinEp=${infoMinEp}`);
+    
+    // 🎯 Phase 3: Merge detection (compare target slug with immediate prequel's slug)
+    let groupOffset = 0;
+    if (targetIdx > 0) {
+        const prequel = chain[targetIdx - 1];
+        const prequelMatch = await findBestDesiMatch(prequel, input.is_movie);
+        if (prequelMatch && prequelMatch.slug === targetMatch.slug) {
+            groupOffset = prequel.episodes;
+            console.log(`[SEARCH] ✓ Merged with S${prequel.seasonNumber} (groupOffset=${groupOffset})`);
         }
     }
-
-    const isInputSequel = (aniMeta?.prequelEpisodes || 0) > 0;
-    const isInputSeasonOne = !isInputSequel && (input.season || 1) === 1;
     
-    const arcKeywords = [
-        'final', 'entertainment', 'yuukaku', 'swordsmith', 'katanakaji', 
-        'hashira', 'training', 'separation', 'conflict', 'ketsubetsu', 
-        'kashin', 'culling', 'shippuden', 'next generations', 'part', 
-        'cour', 'movie', 'ova', 'oad',
-        'blood war', 'blood-war', 'thousand-year', 'thousand year', 'tybw',
-        'brotherhood', 'sisterhood', 'zero', 'arc'
-    ];
-    const inputTitleLower = (titleToUse + ' ' + romajiToUse).toLowerCase();
-    const isInputArc = arcKeywords.some(kw => inputTitleLower.includes(kw));
-    const userWantsOva = /\b(ova|oad|special|specials|ona)\b/i.test(inputTitleLower);
-
-    const searchPromises = queries.map(async (query, queryIndex) => {
-        const specificityBonus = Math.max(0, 10 - queryIndex * 2);
-        
-        try {
-            const res = await fetchWithTimeout(`https://tatakai-api-2qqx.onrender.com/api/v1/desidubanime/search/${encodeURIComponent(query)}`, 8000);
-            if (!res.ok) return;
-            
-            const data = await res.json();
-            const results = data?.data?.results || [];
-            
-            results.forEach((anime: any) => {
-                const baseScore = getSimilarityScore(query, anime.title);
-                const apiTitleLower = anime.title.toLowerCase();
-                const animeIdLower = anime.id.toLowerCase();
-                
-                const hasHigherSeason = 
-                    /\b(season|s)\s*[2-9]\b/i.test(apiTitleLower) ||
-                    /\b[2-9](?:nd|rd|th)\s+season\b/i.test(apiTitleLower) ||
-                    /season-[2-9]/i.test(animeIdLower) ||
-                    /-[2-9](?:nd|rd|th)-season/i.test(animeIdLower) ||
-                    /\b(second|third|fourth|fifth|sixth)\s+season\b/i.test(apiTitleLower) ||
-                    /\b(II|III|IV|V|VI)\s*(?:$|:|\s)/i.test(anime.title);
-                
-                const isExplicitSeasonOne = 
-                    /\b(season|s)\s*1\b/i.test(apiTitleLower) ||
-                    /\b1(?:st)\s+season\b/i.test(apiTitleLower) ||
-                    /season-1/i.test(animeIdLower);
-                
-                const finalScore = baseScore + specificityBonus;
-                
-                if (baseScore < 20) return;
-                
-                if (input.is_movie && anime.type !== 'MOVIE') return;
-                if (!input.is_movie && anime.type === 'MOVIE') return;
-
-                // 🎯 OVA/Special ব্লক (fallback-এও ঢুকতে দেব না)
-                const isOvaKeyword = /\b(ova|oad|special|specials|ona)\b/i.test(apiTitleLower);
-                const isOvaInId = /(?:^|[-_])(ova|oad|special|specials|ona)(?:[-_]|$)/i.test(animeIdLower);
-                
-                if ((isOvaKeyword || isOvaInId) && !userWantsOva) {
-                    console.log(`[SEARCH] BLOCKED (OVA): "${anime.title}" (${anime.id})`);
-                    return; // 🔥 fallback-এও পুশ করব না
-                }
-
-                fallbackCandidates.push({ rawSlug: anime.id, score: finalScore });
-
-                if (isInputSequel && !input.is_movie) {
-                    const isS1 = isExplicitSeasonOne;
-                    const isBareBase = !hasHigherSeason && !isExplicitSeasonOne && !isInputArc && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment') && !apiTitleLower.includes('arc') && !apiTitleLower.includes('part');
-                    
-                    if (isS1 || isBareBase) {
-                        console.log(`[SEARCH] BLOCKED (S1/Bare for Sequel): "${anime.title}"`);
-                        return;
-                    }
-                }
-
-                if (isInputSeasonOne && hasHigherSeason) {
-                    if (!isInputArc && !apiTitleLower.includes('final') && !apiTitleLower.includes('entertainment')) {
-                        return;
-                    }
-                }
-
-                candidates.push({ rawSlug: anime.id, score: finalScore });
-            });
-        } catch (e) {}
-    });
-
-    await Promise.allSettled(searchPromises);
-
-    candidates.sort((a, b) => b.score - a.score);
-    const unique = new Map();
-    candidates.forEach(c => {
-        if (!unique.has(c.rawSlug)) unique.set(c.rawSlug, c);
-    });
+    // 🎯 Phase 4: Determine absolute numbering likelihood
+    const isLikelyAbsolute = target.cumulativeBefore > 0 && infoMinEp >= target.cumulativeBefore * 0.5;
+    console.log(`[SEARCH] likelyAbsolute=${isLikelyAbsolute}`);
     
-    let result = Array.from(unique.values()).slice(0, 2);
-    
-    if (result.length === 0 && fallbackCandidates.length > 0) {
-        fallbackCandidates.sort((a, b) => b.score - a.score);
-        const fallbackUnique = new Map();
-        fallbackCandidates.forEach(c => {
-            if (!fallbackUnique.has(c.rawSlug)) fallbackUnique.set(c.rawSlug, c);
-        });
-        result = Array.from(fallbackUnique.values()).slice(0, 1);
-        console.log(`[SEARCH] FALLBACK used (all blocked), returning top candidate`);
+    // 🎯 Build offset priority list
+    const offsets = new Set<number>();
+    if (groupOffset > 0) offsets.add(groupOffset);
+    if (isLikelyAbsolute && target.cumulativeBefore > 0) offsets.add(target.cumulativeBefore);
+    offsets.add(0);
+    if (!isLikelyAbsolute && target.cumulativeBefore > 0 && !offsets.has(target.cumulativeBefore)) {
+        offsets.add(target.cumulativeBefore);
     }
     
-    return result;
+    const offsetsArray = Array.from(offsets);
+    console.log(`[SEARCH] Offsets to try: [${offsetsArray.join(', ')}]`);
+    
+    return [{
+        rawSlug: targetMatch.slug,
+        baseName,
+        offsets: offsetsArray,
+        score: targetMatch.score,
+        debug: {
+            aniSeason: target.seasonNumber,
+            groupSize: groupOffset > 0 ? 2 : 1,
+            desiSlug: targetMatch.slug,
+            desiTitle: targetMatch.title
+        }
+    }];
 }
