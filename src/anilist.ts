@@ -1,208 +1,100 @@
-const ANILIST_PROXY_URL = "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql";
-const CACHE_VERSION = "v11";
+import type { AniListMeta, ChainSeason, Format } from './types';
+import { fetchWithTimeout } from './utils';
 
-interface ChainSeason {
-    anilistId: number;
-    seasonNumber: number;
-    title: string;
-    romajiTitle: string;
-    synonyms: string[];
-    episodes: number;
-    format: string;
-    cumulativeBefore: number;
-    cumulativeAfter: number;
-}
+// ১. প্রাইমারি প্রক্সি, ২. অফিসিয়াল ফলব্যাক
+const ANILIST_ENDPOINTS = [
+  "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql",
+  "https://graphql.anilist.co"
+];
 
-interface AniListMeta {
-    format: string;
-    englishTitle: string;
-    romajiTitle: string;
-    year: number;
-    seasonsBefore: number;
-    prequelEpisodes: number;
-    prequelYear: number;
-    immediatePrequelTitle: string;
-    immediatePrequelEpisodes: number;
-    synonyms: string[];
-    chain: ChainSeason[];
-}
-
+const CACHE_VERSION = "v12-dynamic"; 
 const cache = new Map<string, { data: AniListMeta | null; expiry: number }>();
 
-async function fetchMedia(id: number): Promise<any> {
-    const query = `
+interface MediaNode {
+  id: number;
+  title: { english?: string; romaji?: string };
+  synonyms?: string[];
+  format?: Format;
+  episodes?: number | null;
+  relations?: {
+    edges: Array<{ relationType: string; node: MediaNode }>;
+  };
+}
+
+async function fetchMedia(id: number): Promise<MediaNode | null> {
+  const query = `
     query ($id: Int) {
-      Media(id: $id) {
-        id
-        format
-        startDate { year }
-        seasonYear
+      Media(id: $id, type: ANIME) {
+        id format episodes synonyms
         title { english romaji }
-        episodes
-        synonyms
         relations {
           edges {
             relationType
-            node {
-              id
-              format
-              episodes
-              title { english romaji }
-              startDate { year }
-            }
+            node { id format episodes title { english romaji } }
           }
         }
       }
     }
-    `;
+  `;
+
+  for (const endpoint of ANILIST_ENDPOINTS) {
     try {
-        const res = await fetch(ANILIST_PROXY_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query, variables: { id } })
-        });
-        if (!res.ok) return null;
+      const res = await fetchWithTimeout(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables: { id } })
+      }, 8000);
+      
+      if (res.ok) {
         const json: any = await res.json();
-        return json?.data?.Media || null;
-    } catch (e) {
-        return null;
+        if (json?.data?.Media) return json.data.Media;
+      }
+    } catch {
+      // এক এন্ডপয়েন্ট ফেল করলে লুপ চলে পরেরটায় যাবে
     }
-}
-
-async function buildChain(anilistId: number, media: any): Promise<ChainSeason[]> {
-    const visited = new Map<number, any>();
-    visited.set(anilistId, media);
-    const chainIds: number[] = [anilistId];
-
-    let current = media;
-    for (let depth = 0; depth < 8; depth++) {
-        const prequels: any[] = current?.relations?.edges?.filter(
-            (e: any) => e.relationType === 'PREQUEL' && e.node.format === 'TV'
-        ) || [];
-        const sorted = prequels.sort((a: any, b: any) =>
-            (b.node.startDate?.year || 0) - (a.node.startDate?.year || 0)
-        );
-        const best = sorted[0];
-        if (!best || visited.has(best.node.id)) break;
-        const prequelData = await fetchMedia(best.node.id);
-        if (!prequelData) break;
-        visited.set(best.node.id, prequelData);
-        chainIds.unshift(best.node.id);
-        current = prequelData;
-    }
-
-    current = media;
-    for (let depth = 0; depth < 5; depth++) {
-        const sequels: any[] = current?.relations?.edges?.filter(
-            (e: any) => e.relationType === 'SEQUEL' && e.node.format === 'TV'
-        ) || [];
-        const sorted = sequels.sort((a: any, b: any) =>
-            (a.node.startDate?.year || 0) - (b.node.startDate?.year || 0)
-        );
-        const best = sorted[0];
-        if (!best || visited.has(best.node.id)) break;
-        const sequelData = await fetchMedia(best.node.id);
-        if (!sequelData) break;
-        visited.set(best.node.id, sequelData);
-        chainIds.push(best.node.id);
-        current = sequelData;
-    }
-
-    const chain: ChainSeason[] = [];
-    let cumBefore = 0;
-    for (let i = 0; i < chainIds.length; i++) {
-        const data = visited.get(chainIds[i]);
-        if (!data) continue;
-        const eps: number = data.episodes || 0;
-        const rawSynonyms: any[] = data.synonyms || [];
-        chain.push({
-            anilistId: chainIds[i],
-            seasonNumber: i + 1,
-            title: data.title?.english || data.title?.romaji || '',
-            romajiTitle: data.title?.romaji || '',
-            synonyms: rawSynonyms
-                .filter((s: any) => typeof s === 'string' && s.length > 3 && s.length < 80)
-                .filter((s: string) => /^[a-zA-Z0-9\s\-:.,!?'&()]+$/.test(s))
-                .slice(0, 3),
-            episodes: eps,
-            format: data.format || 'TV',
-            cumulativeBefore: cumBefore,
-            cumulativeAfter: cumBefore + eps
-        });
-        cumBefore += eps;
-    }
-
-    return chain;
+  }
+  return null;
 }
 
 export async function getAniListMeta(anilistId: number): Promise<AniListMeta | null> {
-    if (!anilistId) return null;
+  if (!anilistId) return null;
 
-    const now = Date.now();
-    const cacheKey = `${CACHE_VERSION}-${anilistId}`;
-    if (cache.has(cacheKey)) {
-        const cached = cache.get(cacheKey);
-        if (cached && now < cached.expiry) return cached.data;
-    }
+  const now = Date.now();
+  const cacheKey = `${CACHE_VERSION}-${anilistId}`;
+  const cached = cache.get(cacheKey);
+  if (cached && now < cached.expiry) return cached.data;
 
-    const media = await fetchMedia(anilistId);
-    if (!media) {
-        cache.set(cacheKey, { data: null, expiry: now + 60 * 1000 });
-        return null;
-    }
+  const media = await fetchMedia(anilistId);
+  if (!media) {
+    cache.set(cacheKey, { data: null, expiry: now + 60 * 1000 });
+    return null;
+  }
 
-    let seasonsBefore = 0;
-    let prequelEpisodes = 0;
-    let prequelYear = 0;
-    let immediatePrequelTitle = "";
-    let immediatePrequelEpisodes = 0;
-    let currentMedia: any = media;
-    const visited = new Set<number>([anilistId]);
+  // 🎯 Unicode Supported Regex for Synonyms (\p{L} = Letters, \p{N} = Numbers)
+  const filterSynonyms = (syns: string[] = []) => 
+    syns.filter(s => /^[\p{L}\p{N}\s\-:.,!?'&()]+$/u.test(s)).slice(0, 5);
 
-    for (let depth = 0; depth < 10; depth++) {
-        const prequels: any[] = currentMedia?.relations?.edges?.filter(
-            (e: any) => e.relationType === 'PREQUEL' && e.node.format === 'TV'
-        ) || [];
-        const sorted = prequels.sort((a: any, b: any) =>
-            (b.node.startDate?.year || 0) - (a.node.startDate?.year || 0)
-        );
-        const best = sorted[0];
-        if (!best || visited.has(best.node.id)) break;
-        visited.add(best.node.id);
-        seasonsBefore++;
-        prequelEpisodes += (best.node.episodes || 0);
-        if (prequelYear === 0) {
-            prequelYear = best.node.startDate?.year || 0;
-            immediatePrequelTitle = best.node.title?.english || best.node.title?.romaji || "";
-            immediatePrequelEpisodes = best.node.episodes || 0;
-        }
-        const prequelMedia = await fetchMedia(best.node.id);
-        if (!prequelMedia) break;
-        currentMedia = prequelMedia;
-    }
+  const toChainSeason = (node: MediaNode, rel: 'CURRENT' | 'PREQUEL' | 'SEQUEL'): ChainSeason => ({
+    anilistId: node.id,
+    title: node.title?.english || node.title?.romaji || '',
+    romajiTitle: node.title?.romaji || '',
+    synonyms: filterSynonyms(node.synonyms),
+    episodes: node.episodes || 0,
+    format: node.format || 'TV',
+    relationType: rel
+  });
 
-    const chain = await buildChain(anilistId, media);
+  const prequelEdges = (media.relations?.edges || [])
+    .filter(e => e.relationType === 'PREQUEL' && e.node.format === 'TV')
+    .sort((a, b) => (b.node.id - a.node.id)); 
 
-    const rawSynonyms: any[] = media.synonyms || [];
-    const meta: AniListMeta = {
-        format: media.format || 'TV',
-        englishTitle: media.title?.english || '',
-        romajiTitle: media.title?.romaji || '',
-        year: media.startDate?.year || media.seasonYear || 0,
-        seasonsBefore,
-        prequelEpisodes,
-        prequelYear,
-        immediatePrequelTitle,
-        immediatePrequelEpisodes,
-        synonyms: rawSynonyms
-            .filter((s: any) => typeof s === 'string')
-            .filter((s: string) => /^[a-zA-Z0-9\s\-:.,!?'&()]+$/.test(s))
-            .slice(0, 5),
-        chain
-    };
+  const meta: AniListMeta = {
+    current: toChainSeason(media, 'CURRENT'),
+    prequels: prequelEdges.map(e => toChainSeason(e.node, 'PREQUEL')),
+    immediatePrequelEpisodes: prequelEdges[0]?.node?.episodes || 0,
+    synonyms: filterSynonyms(media.synonyms)
+  };
 
-    cache.set(cacheKey, { data: meta, expiry: now + 5 * 60 * 1000 });
-    return meta;
+  cache.set(cacheKey, { data: meta, expiry: now + 5 * 60 * 1000 });
+  return meta;
 }
-
-export type { AniListMeta, ChainSeason };
