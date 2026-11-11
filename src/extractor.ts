@@ -5,7 +5,6 @@ import { fetchWithTimeout, decodeEmbedId, isAllowedServer } from './utils';
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 const DESI_BASE = "https://www.desidubanime.me";
 
-// ─── 1. Direct HTML Scraper (epNum: null হলে স্লাগে -episode লাগবে না) ───
 async function scrapeDesiHtml(baseName: string, epNum: number | null): Promise<DesiSource[] | null> {
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
@@ -37,7 +36,6 @@ async function scrapeDesiHtml(baseName: string, epNum: number | null): Promise<D
   }
 }
 
-// ─── 2. Tatakai Watch API (Fallback) ───────────────────
 async function fetchTatakaiWatch(baseName: string, epNum: number | null): Promise<DesiSource[] | null> {
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
@@ -60,55 +58,59 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null): Promis
   }
 }
 
-// ─── 3. Parallel Probing Logic ─────────────────────────
-async function probeParallel(base: string, epCandidates: (number | null)[]): Promise<DesiSource[] | null> {
-  // প্রথমে প্যারালালি HTML স্ক্র্যাপ করব (সবচেয়ে ফাস্ট)
-  const htmlPromises = epCandidates.map(ep => scrapeDesiHtml(base, ep));
-  const htmlResults = await Promise.all(htmlPromises);
-  const validHtml = htmlResults.find(r => r && r.length > 0);
-  if (validHtml) return validHtml;
-
-  // HTML ফেল করলে প্যারালালি Tatakai API তে হিট করব
-  const tatakaiPromises = epCandidates.map(ep => fetchTatakaiWatch(base, ep));
-  const tatakaiResults = await Promise.all(tatakaiPromises);
-  const validTatakai = tatakaiResults.find(r => r && r.length > 0);
-  if (validTatakai) return validTatakai;
-
-  return null;
-}
-
-// ─── 4. Main Extractor ─────────────────────────────────
 export async function extractStreams(candidates: Candidate[], input: ProxyInput): Promise<DesiSource[]> {
   if (candidates.length === 0) return [];
 
   const aniMeta = await getAniListMeta(input.anilist_id);
   const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
+  // সব ইউনিক BaseName এবং Slug বের করা
+  const allBases = new Set<string>();
   for (const cand of candidates) {
-    const bases = [cand.derivedBaseName, cand.slug].filter(Boolean) as string[];
+    if (cand.derivedBaseName) allBases.add(cand.derivedBaseName);
+    allBases.add(cand.slug);
+  }
 
-    for (const base of bases) {
-      let epCandidates: (number | null)[] = [];
+  const probePromises: Promise<DesiSource[] | null>[] = [];
 
-      if (input.is_movie) {
-        // মুভির জন্য: সরাসরি base এবং base-episode-1
-        epCandidates = [null, 1];
-      } else {
-        // TV সিরিজের জন্য: [ep + prequelEps, ep]
-        let eps = [input.episode + prequelEps, input.episode];
-        epCandidates = [...new Set(eps.filter(e => e > 0))];
-      }
+  for (const base of allBases) {
+    let epCandidates: (number | null)[] = [];
+    if (input.is_movie) {
+      epCandidates = [null, 1];
+    } else {
+      let eps = [input.episode + prequelEps, input.episode];
+      epCandidates = [...new Set(eps.filter(e => e > 0))];
+    }
 
-      console.log(`[EXTRACT] Probing Base: ${base} | Eps: [${epCandidates.join(', ')}]`);
-      
-      const sources = await probeParallel(base, epCandidates);
-      if (sources) {
-        console.log(`[EXTRACT] ✓ Success: ${base}`);
-        return sources;
-      }
+    // প্রতিটা base এবং episode কম্বিনেশনের জন্য HTML স্ক্র্যাপ পুশ করা
+    for (const ep of epCandidates) {
+      probePromises.push(scrapeDesiHtml(base, ep));
     }
   }
 
-  console.log(`[EXTRACT] ❌ All candidates and offsets failed.`);
+  // 🚀 ১. প্রথমে সব HTML স্ক্র্যাপ প্যারালালি চেক করব
+  const htmlResults = await Promise.all(probePromises);
+  const validHtml = htmlResults.find(r => r && r.length > 0);
+  if (validHtml) return validHtml;
+
+  // 🚀 ২. যদি HTML স্ক্র্যাপ ফেল করে, তবে Tatakai API প্যারালালি চেক করব
+  const tatakaiPromises: Promise<DesiSource[] | null>[] = [];
+  for (const base of allBases) {
+    let epCandidates: (number | null)[] = [];
+    if (input.is_movie) {
+      epCandidates = [null, 1];
+    } else {
+      let eps = [input.episode + prequelEps, input.episode];
+      epCandidates = [...new Set(eps.filter(e => e > 0))];
+    }
+    for (const ep of epCandidates) {
+      tatakaiPromises.push(fetchTatakaiWatch(base, ep));
+    }
+  }
+
+  const tatakaiResults = await Promise.all(tatakaiPromises);
+  const validTatakai = tatakaiResults.find(r => r && r.length > 0);
+  if (validTatakai) return validTatakai;
+
   return [];
 }
