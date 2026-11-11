@@ -17,33 +17,9 @@ export interface ProxyOutput {
   }[];
 }
 
-export interface ChainSeason {
-  anilistId: number;
-  seasonNumber: number;
-  title: string;
-  romajiTitle: string;
-  synonyms: string[];
-  episodes: number;
-  format: string;
-  cumulativeBefore: number;
-  cumulativeAfter: number;
-}
-
-export interface AniListMeta {
-  format: string;
-  englishTitle: string;
-  romajiTitle: string;
-  year: number;
-  seasonsBefore: number;
-  prequelEpisodes: number;
-  prequelYear: number;
-  immediatePrequelTitle: string;
-  immediatePrequelEpisodes: number;
-  synonyms: string[];
-  chain?: ChainSeason[];
-}
-
 export interface Candidate {
   rawSlug: string;
   score: number;
 }
+
+// AniListMeta এবং ChainSeason এখন anilist.ts-এ define করা আছে
