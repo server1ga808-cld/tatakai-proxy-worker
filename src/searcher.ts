@@ -1,12 +1,13 @@
 import type { ProxyInput, Candidate, DesiSearchResult } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, isLanguageRestricted, getCache, setCache } from './utils';
+import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
+    // 🎯 Timeout increased to 10s for Render sleep
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 10000);
     if (!res.ok) return [];
     const json: any = await res.json();
     return json?.data?.results || [];
@@ -20,10 +21,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const romajiToUse = aniMeta?.current.romajiTitle || input.romaji_title || '';
   const synonyms = aniMeta?.synonyms || [];
   const rootTitle = getRootTitle(titleToUse);
-  const preferredLang = input.preferred_lang || 'hindi';
   
   const queries = [...new Set([titleToUse, romajiToUse, rootTitle, ...synonyms].filter(q => q && q.length > 2))];
-  const cacheKey = `search-${slugify(titleToUse)}-${preferredLang}`;
+  const cacheKey = `search-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
@@ -38,7 +38,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   for (const cand of flatResults) {
     if (!cand || !cand.id) continue;
-    if (isLanguageRestricted(cand.id, preferredLang) || isLanguageRestricted(cand.title, preferredLang)) continue;
 
     let score = Math.max(getSimilarityScore(titleToUse, cand.title), getSimilarityScore(romajiToUse, cand.title), getSimilarityScore(rootTitle, cand.title));
     if (getSimilarityScore(romajiToUse, cand.title) > 0.8) score += 0.5;
