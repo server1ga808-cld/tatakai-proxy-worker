@@ -7,7 +7,7 @@ export interface ProxyInput {
   year?: number;
   season?: string;
   anilist_id: number;
-  preferred_lang?: string; // ডিফল্ট: hindi/desi
+  preferred_lang?: string;
 }
 
 export type Format = 'TV' | 'TV_SHORT' | 'MOVIE' | 'OVA' | 'ONA' | 'SPECIAL' | string;
