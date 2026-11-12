@@ -1,60 +1,51 @@
 import type { AniListMeta, ChainSeason, Format } from './types';
 import { fetchWithTimeout } from './utils';
 
-// ১. প্রাইমারি প্রক্সি, ২. অফিসিয়াল ফলব্যাক
 const ANILIST_ENDPOINTS = [
   "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql",
   "https://graphql.anilist.co"
 ];
 
-const CACHE_VERSION = "v13-clean-test"; 
+const CACHE_VERSION = "v18-final-masterpiece"; 
 const cache = new Map<string, { data: AniListMeta | null; expiry: number }>();
 
-interface MediaNode {
-  id: number;
-  title: { english?: string; romaji?: string };
-  synonyms?: string[];
-  format?: Format;
-  episodes?: number | null;
-  relations?: {
-    edges: Array<{ relationType: string; node: MediaNode }>;
-  };
-}
+const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
-async function fetchMedia(id: number): Promise<MediaNode | null> {
-  const query = `
-    query ($id: Int) {
-      Media(id: $id, type: ANIME) {
-        id format episodes synonyms
-        title { english romaji }
-        relations {
-          edges {
-            relationType
-            node { id format episodes title { english romaji } }
-          }
-        }
-      }
-    }
-  `;
-
+async function gqlRequest(query: string, variables: any): Promise<any> {
   for (const endpoint of ANILIST_ENDPOINTS) {
     try {
       const res = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, variables: { id } })
+        body: JSON.stringify({ query, variables })
       }, 8000);
-      
       if (res.ok) {
         const json: any = await res.json();
-        if (json?.data?.Media) return json.data.Media;
+        if (json?.data) return json.data;
       }
-    } catch {
-      // এক এন্ডপয়েন্ট ফেল করলে লুপ চলে পরেরটায় যাবে
-    }
+    } catch { /* Try next endpoint */ }
   }
   return null;
 }
+
+const RELATION_QUERY = `
+  query ($id: Int) {
+    Media(id: $id, type: ANIME) {
+      id title { english romaji } format episodes synonyms
+      relations { edges { relationType node { id format episodes } } }
+    }
+  }
+`;
+
+const BULK_QUERY = `
+  query ($ids: [Int]) {
+    Page(perPage: 50) {
+      media(id_in: $ids, type: ANIME) {
+        id title { english romaji } format episodes synonyms
+      }
+    }
+  }
+`;
 
 export async function getAniListMeta(anilistId: number): Promise<AniListMeta | null> {
   if (!anilistId) return null;
@@ -64,37 +55,74 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
   const cached = cache.get(cacheKey);
   if (cached && now < cached.expiry) return cached.data;
 
-  const media = await fetchMedia(anilistId);
-  if (!media) {
-    cache.set(cacheKey, { data: null, expiry: now + 60 * 1000 });
-    return null;
+  const currentData = await gqlRequest(RELATION_QUERY, { id: anilistId });
+  if (!currentData?.Media) return null;
+  
+  const currentMedia = currentData.Media;
+  
+  // Prequel Walk
+  let rootId = anilistId;
+  let tempMedia = currentMedia;
+  
+  for (let depth = 0; depth < 10; depth++) {
+    const prequelEdge = tempMedia.relations?.edges?.find(
+      (e: any) => e.relationType === 'PREQUEL' && ALLOWED_FORMATS.includes(e.node.format)
+    );
+    if (!prequelEdge) break; 
+    
+    rootId = prequelEdge.node.id;
+    const rootData = await gqlRequest(RELATION_QUERY, { id: rootId });
+    if (!rootData?.Media) break;
+    tempMedia = rootData.Media;
   }
 
-  // 🎯 Unicode Supported Regex for Synonyms (\p{L} = Letters, \p{N} = Numbers)
+  // Sequel Walk
+  const timelineIds: number[] = [rootId];
+  let currentId = rootId;
+  let walkMedia = tempMedia; 
+
+  for (let depth = 0; depth < 15; depth++) {
+    const sequelEdge = walkMedia?.relations?.edges?.find(
+      (e: any) => e.relationType === 'SEQUEL' && ALLOWED_FORMATS.includes(e.node.format)
+    );
+    if (!sequelEdge) break; 
+
+    currentId = sequelEdge.node.id;
+    timelineIds.push(currentId);
+    
+    const nextData = await gqlRequest(RELATION_QUERY, { id: currentId });
+    if (!nextData?.Media) break;
+    walkMedia = nextData.Media;
+  }
+
+  const bulkData = await gqlRequest(BULK_QUERY, { ids: timelineIds });
+  const mediaList = bulkData?.Page?.media || [];
+
+  const orderedMedia = timelineIds.map(id => mediaList.find((m: any) => m.id === id)).filter(Boolean);
+
   const filterSynonyms = (syns: string[] = []) => 
     syns.filter(s => /^[\p{L}\p{N}\s\-:.,!?'&()]+$/u.test(s)).slice(0, 5);
 
-  const toChainSeason = (node: MediaNode, rel: 'CURRENT' | 'PREQUEL' | 'SEQUEL'): ChainSeason => ({
+  const toChainSeason = (node: any): ChainSeason => ({
     anilistId: node.id,
     title: node.title?.english || node.title?.romaji || '',
     romajiTitle: node.title?.romaji || '',
-    synonyms: filterSynonyms(node.synonyms),
     episodes: node.episodes || 0,
-    format: node.format || 'TV',
-    relationType: rel
+    format: node.format || 'TV'
   });
 
-  const prequelEdges = (media.relations?.edges || [])
-    .filter(e => e.relationType === 'PREQUEL' && e.node.format === 'TV')
-    .sort((a, b) => (b.node.id - a.node.id)); 
+  const targetIndex = timelineIds.indexOf(anilistId);
+  const prequelId = targetIndex > 0 ? timelineIds[targetIndex - 1] : null;
+  const prequelMedia = prequelId ? mediaList.find((m: any) => m.id === prequelId) : null;
+  const immediatePrequelEpisodes = prequelMedia?.episodes || 0;
 
   const meta: AniListMeta = {
-    current: toChainSeason(media, 'CURRENT'),
-    prequels: prequelEdges.map(e => toChainSeason(e.node, 'PREQUEL')),
-    immediatePrequelEpisodes: prequelEdges[0]?.node?.episodes || 0,
-    synonyms: filterSynonyms(media.synonyms)
+    current: toChainSeason(currentMedia),
+    timeline: orderedMedia.map(m => toChainSeason(m)),
+    immediatePrequelEpisodes,
+    synonyms: filterSynonyms(currentMedia.synonyms)
   };
 
-  cache.set(cacheKey, { data: meta, expiry: now + 5 * 60 * 1000 });
+  cache.set(cacheKey, { data: meta, expiry: now + 1000 * 60 * 60 * 6 });
   return meta;
 }
