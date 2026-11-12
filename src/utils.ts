@@ -5,7 +5,7 @@ export function slugify(text: string): string {
   return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 8000): Promise<Response> {
+export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 10000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -15,16 +15,13 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   }
 }
 
-// 🎯 Cloudflare Edge Cache Helpers
 export async function getCache<T>(key: string): Promise<T | null> {
   try {
     const cacheUrl = `https://cache.internal/${key}`;
     const res = await caches.default.match(new Request(cacheUrl));
     if (!res) return null;
     return await res.json() as T;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 export async function setCache<T>(key: string, data: T, ttlSeconds: number = 86400): Promise<void> {
@@ -34,7 +31,7 @@ export async function setCache<T>(key: string, data: T, ttlSeconds: number = 864
       headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttlSeconds}` }
     });
     await caches.default.put(new Request(cacheUrl), res);
-  } catch { /* Ignore cache write errors */ }
+  } catch { }
 }
 
 export function isAllowedServer(serverName: string): boolean {
@@ -42,27 +39,8 @@ export function isAllowedServer(serverName: string): boolean {
   return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly');
 }
 
-const LANG_SYNONYMS: Record<string, string[]> = {
-  'bengali': ['bangla', 'bengali'], 'tamil': ['tamil'], 'telugu': ['telugu'],
-  'malayalam': ['malayalam'], 'kannada': ['kannada'], 'english': ['english', 'eng'], 'hindi': ['hindi', 'desi']
-};
-
 export function isLanguageRestricted(slugOrTitle: string, preferredLang: string = 'hindi'): boolean {
-  const s = slugOrTitle.toLowerCase();
-  const pref = preferredLang.toLowerCase();
-  
-  let prefSynonyms: string[] = [pref];
-  for (const [key, syns] of Object.entries(LANG_SYNONYMS)) {
-    if (syns.some(langSyn => pref.includes(langSyn) || langSyn.includes(pref))) {
-      prefSynonyms = syns; break;
-    }
-  }
-  for (const [langKey, syns] of Object.entries(LANG_SYNONYMS)) {
-    if (syns.some(l => s.includes(l))) {
-      if (!syns.some(l => prefSynonyms.includes(l))) return true;
-    }
-  }
-  return false;
+  return false; // Streams are multi-audio, no need to block
 }
 
 const ROMAN_MAP: Record<string, string> = { 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5', 'vi': '6', 'vii': '7', 'viii': '8', 'ix': '9', 'x': '10' };
@@ -99,11 +77,26 @@ export function getSimilarityScore(a: string, b: string): number {
   return Math.min(1, (jaccard * 0.7) + ((prefixMatch === minLen && minLen > 0 ? 1 : (prefixMatch >= 2 ? 0.5 : 0)) * 0.3));
 }
 
+// 🎯 ১০০% বুলেটপ্রুফ ভেরিফিকেশন (মাল্টি-অডিও ট্যাগ হ্যান্ডেল করার জন্য)
 export function verifyEpisodeNumber(desiTitle: string, targetEp: number, isMovie: boolean = false): boolean {
   if (isMovie) return true;
   if (!desiTitle) return false;
+  
   const normalized = desiTitle.toLowerCase();
-  const match = normalized.match(/(?:episode|ep)\.?\s*[-:/\s]*\s*0?(\d+)(?!\d)/i);
-  if (!match) return false; 
-  return parseInt(match[1], 10) === targetEp;
+  
+  // ১. প্রথমে "Episode X" বা "Ep X" খোঁজা
+  let match = normalized.match(/(?:episode|ep)\.?\s*[-:/\s]*\s*0?(\d+)(?!\d)/i);
+  if (match) return parseInt(match[1], 10) === targetEp;
+  
+  // ২. ব্র্যাকেট এবং সিজন/পার্ট রিমুভ করে ক্লিন করা
+  const cleanTitle = normalized
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, '') // ব্র্যাকেটের ভেতরের সব লেখা মুছে ফেলবে (যেমন [Hindi + Bengali])
+    .replace(/\b(?:season|part|cour|s|p)\s*\d+\b/gi, '') // "part 2" বা "season 3" মুছে ফেলবে
+    .trim();
+    
+  // ৩. এবার ক্লিন করা টাইটেলের শেষে থাকা এপিসোড নম্বর খোঁজা
+  match = cleanTitle.match(/(?:^|[-:/\s])\s*0?(\d+)(?!\d)\s*$/i);
+  if (match) return parseInt(match[1], 10) === targetEp;
+  
+  return false; 
 }
