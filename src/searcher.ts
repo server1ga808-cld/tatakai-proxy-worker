@@ -1,6 +1,6 @@
 import type { ProxyInput, Candidate, DesiSearchResult } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, isLanguageRestricted } from './utils';
+import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, isLanguageRestricted, getCache, setCache } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -19,11 +19,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const titleToUse = aniMeta?.current.title || input.title;
   const romajiToUse = aniMeta?.current.romajiTitle || input.romaji_title || '';
   const synonyms = aniMeta?.synonyms || [];
-  
   const rootTitle = getRootTitle(titleToUse);
   const preferredLang = input.preferred_lang || 'hindi';
   
   const queries = [...new Set([titleToUse, romajiToUse, rootTitle, ...synonyms].filter(q => q && q.length > 2))];
+  const cacheKey = `search-${slugify(titleToUse)}-${preferredLang}`;
+  
+  const cached = await getCache<Candidate[]>(cacheKey);
+  if (cached) return cached;
 
   const tatakaiPromises = queries.map(q => searchTatakai(q));
   const tatakaiResults = await Promise.all(tatakaiPromises);
@@ -35,17 +38,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   for (const cand of flatResults) {
     if (!cand || !cand.id) continue;
+    if (isLanguageRestricted(cand.id, preferredLang) || isLanguageRestricted(cand.title, preferredLang)) continue;
 
-    if (isLanguageRestricted(cand.id, preferredLang) || isLanguageRestricted(cand.title, preferredLang)) {
-      continue; 
-    }
-
-    let score = Math.max(
-      getSimilarityScore(titleToUse, cand.title),
-      getSimilarityScore(romajiToUse, cand.title),
-      getSimilarityScore(rootTitle, cand.title)
-    );
-
+    let score = Math.max(getSimilarityScore(titleToUse, cand.title), getSimilarityScore(romajiToUse, cand.title), getSimilarityScore(rootTitle, cand.title));
     if (getSimilarityScore(romajiToUse, cand.title) > 0.8) score += 0.5;
 
     if (!scoreMap.has(cand.id) || score > scoreMap.get(cand.id)!.score) {
@@ -55,23 +50,16 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   const scored: Candidate[] = [];
   for (const [slug, data] of scoreMap) {
-    const candType = data.cand.type.toUpperCase();
     let finalScore = data.score;
-
-    if (input.is_movie && candType !== 'MOVIE') finalScore -= 0.3;
-    if (!input.is_movie && candType === 'MOVIE') finalScore -= 0.3;
-
+    if (input.is_movie && data.cand.type.toUpperCase() !== 'MOVIE') finalScore -= 0.3;
+    if (!input.is_movie && data.cand.type.toUpperCase() === 'MOVIE') finalScore -= 0.3;
     if (finalScore < 0.15) continue; 
 
-    scored.push({
-      slug: slug,
-      title: data.cand.title,
-      type: data.cand.type,
-      score: finalScore,
-      derivedBaseName: slugify(romajiToUse) !== slug ? slugify(romajiToUse) : undefined
-    });
+    scored.push({ slug, title: data.cand.title, type: data.cand.type, score: finalScore, derivedBaseName: slugify(romajiToUse) !== slug ? slugify(romajiToUse) : undefined });
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 3);
+  const result = scored.slice(0, 3);
+  await setCache(cacheKey, result, 86400); // ১ দিন ক্যাশ
+  return result;
 }
