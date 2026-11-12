@@ -2,42 +2,7 @@ import type { DesiSource } from './types';
 
 export function slugify(text: string): string {
   if (!text) return '';
-  return text
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
-function padBase64(str: string): string {
-  const pad = str.length % 4;
-  return pad ? str + '='.repeat(4 - pad) : str;
-}
-
-export function decodeEmbedId(raw: string): DesiSource | null {
-  try {
-    const parts = raw.split(':');
-    if (parts.length !== 2) return null;
-    
-    const server = atob(padBase64(parts[0])).trim();
-    let url = atob(padBase64(parts[1])).trim();
-    
-    if (!url.startsWith('http')) {
-      const match = url.match(/src=['"](.*?)['"]/i);
-      if (match && match[1]) {
-        url = match[1];
-        if (url.startsWith('//')) url = 'https:' + url;
-      }
-    }
-    return { server, url, type: 'embed' };
-  } catch {
-    return null;
-  }
-}
-
-export function isAllowedServer(serverName: string): boolean {
-  const s = serverName.toLowerCase();
-  return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly');
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 8000): Promise<Response> {
@@ -48,6 +13,43 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   } finally {
     clearTimeout(id);
   }
+}
+
+export function isAllowedServer(serverName: string): boolean {
+  const s = serverName.toLowerCase();
+  return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly');
+}
+
+const LANG_SYNONYMS: Record<string, string[]> = {
+  'bengali': ['bangla', 'bengali'],
+  'tamil': ['tamil'],
+  'telugu': ['telugu'],
+  'malayalam': ['malayalam'],
+  'kannada': ['kannada'],
+  'english': ['english', 'eng'],
+  'hindi': ['hindi', 'desi']
+};
+
+export function isLanguageRestricted(slugOrTitle: string, preferredLang: string = 'hindi'): boolean {
+  const s = slugOrTitle.toLowerCase();
+  const pref = preferredLang.toLowerCase();
+  
+  let prefSynonyms: string[] = [pref];
+  for (const [key, syns] of Object.entries(LANG_SYNONYMS)) {
+    if (syns.some(langSyn => pref.includes(langSyn) || langSyn.includes(pref))) {
+      prefSynonyms = syns;
+      break;
+    }
+  }
+
+  for (const [langKey, syns] of Object.entries(LANG_SYNONYMS)) {
+    const hasLangInSlug = syns.some(l => s.includes(l));
+    if (hasLangInSlug) {
+      const isPreferred = syns.some(l => prefSynonyms.includes(l));
+      if (!isPreferred) return true;
+    }
+  }
+  return false;
 }
 
 const ROMAN_MAP: Record<string, string> = {
@@ -61,45 +63,7 @@ export function normalizeNumeric(text: string): string {
   s = s.replace(/\b(season|part|cour)\s+(ii|iii|iv|v|vi|vii|viii|ix|x)\b/g, (_, kw, rm) => ` ${kw} ${ROMAN_MAP[rm]} `);
   s = s.replace(/\bs(\d+)\b/g, ' season $1 ');
   s = s.replace(/\bp(\d+)\b/g, ' part $1 ');
-  s = s.replace(/\bfinal\s+season\b/g, ' final ');
   return s.replace(/[^a-z0-9\s]/gi, ' ').replace(/\s+/g, ' ').trim();
-}
-
-const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'on', 'at', 'is', 'as', 'with', 'no', 'by']);
-
-function tokenize(s: string): string[] {
-  return normalizeNumeric(s).split(/\s+/).filter(w => w.length > 0 && !STOP_WORDS.has(w));
-}
-
-export function wordJaccard(a: string, b: string): number {
-  const sa = new Set(tokenize(a));
-  const sb = new Set(tokenize(b));
-  if (sa.size === 0 && sb.size === 0) return 0;
-  let inter = 0;
-  for (const t of sa) if (sb.has(t)) inter++;
-  const union = sa.size + sb.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
-
-export function prefixBonus(a: string, b: string): number {
-  const ta = tokenize(a);
-  const tb = tokenize(b);
-  const minLen = Math.min(ta.length, tb.length);
-  let matchLen = 0;
-  for (let i = 0; i < minLen; i++) {
-    if (ta[i] === tb[i]) matchLen++;
-    else break;
-  }
-  if (matchLen === minLen && minLen > 0) return 1;
-  if (matchLen >= 2) return 0.5;
-  return 0;
-}
-
-export function getSimilarityScore(a: string, b: string): number {
-  if (!a || !b) return 0;
-  const jac = wordJaccard(a, b);
-  const prefix = prefixBonus(a, b);
-  return Math.min(1, (jac * 0.7) + (prefix * 0.3));
 }
 
 export function getRootTitle(title: string): string {
@@ -114,4 +78,43 @@ export function getRootTitle(title: string): string {
     .replace(/\s+s\d+(?:\s+.*)?$/i, '')
     .replace(/\s+p\d+(?:\s+.*)?$/i, '')
     .trim();
+}
+
+const STOP_WORDS = new Set(['the', 'a', 'an', 'of', 'and', 'to', 'in', 'for', 'on', 'at', 'is', 'as', 'with', 'no', 'by']);
+function tokenize(s: string): string[] {
+  return normalizeNumeric(s).split(/\s+/).filter(w => w.length > 0 && !STOP_WORDS.has(w));
+}
+
+export function getSimilarityScore(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const sa = new Set(tokenize(a));
+  const sb = new Set(tokenize(b));
+  if (sa.size === 0 || sb.size === 0) return 0;
+  
+  let inter = 0;
+  for (const t of sa) if (sb.has(t)) inter++;
+  const jaccard = inter / (sa.size + sb.size - inter);
+  
+  const ta = tokenize(a); const tb = tokenize(b);
+  const minLen = Math.min(ta.length, tb.length);
+  let prefixMatch = 0;
+  for (let i = 0; i < minLen; i++) {
+    if (ta[i] === tb[i]) prefixMatch++;
+    else break;
+  }
+  const prefixBonus = (prefixMatch === minLen && minLen > 0) ? 1 : (prefixMatch >= 2 ? 0.5 : 0);
+  
+  return Math.min(1, (jaccard * 0.7) + (prefixBonus * 0.3));
+}
+
+export function verifyEpisodeNumber(desiTitle: string, targetEp: number, isMovie: boolean = false): boolean {
+  if (isMovie) return true;
+  if (!desiTitle) return false;
+  
+  const normalized = desiTitle.toLowerCase();
+  const match = normalized.match(/(?:episode|ep)\.?\s*[-:/\s]*\s*0?(\d+)(?!\d)/i);
+  if (!match) return false; 
+  
+  const extractedEp = parseInt(match[1], 10);
+  return extractedEp === targetEp;
 }
