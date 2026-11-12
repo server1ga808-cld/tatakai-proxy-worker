@@ -8,8 +8,6 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
-    
-    // 🎯 Timeout increased to 10s
     const res = await fetchWithTimeout(url, {}, 10000); 
     if (!res.ok) return null;
     
@@ -17,7 +15,6 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const rawSources = json?.data?.sources || [];
     const title = json?.data?.title || "";
     
-    // Title Verification with relaxed regex
     if (epNum !== null && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
     
     const validSources: DesiSource[] = [];
@@ -48,45 +45,35 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
   const aniMeta = await getAniListMeta(input.anilist_id);
   const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
-
-  // 🎯 Dynamic Prequels Check from Timeline
-  const targetIndex = aniMeta?.timeline.findIndex(t => t.anilistId === input.anilist_id) ?? -1;
-  const prequelTitles = targetIndex > 0 ? aniMeta!.timeline.slice(0, targetIndex).map(t => t.romajiTitle) : [];
+  
+  // 🎯 P1 Blocking logic using 1-Call prequel titles
+  const prequelTitles = (aniMeta as any)?.currentPrequelTitles || [];
 
   for (const cand of candidates) {
     const bases = [cand.slug, cand.derivedBaseName].filter(Boolean) as string[];
     
     for (const base of bases) {
-      const isPrequelSlug = prequelTitles.some(p => getSimilarityScore(p, base.replace(/-/g, ' ')) > 0.8);
+      const isPrequelSlug = prequelTitles.some((p: string) => getSimilarityScore(p, base.replace(/-/g, ' ')) > 0.8);
 
-      // 🎯 Phase 1: Primary Targets
+      // 🎯 PHASE 1: Primary Targets (Max 2 calls)
       let primaryEps: (number | null)[] = [];
       if (input.is_movie) {
         primaryEps = [null, 1];
       } else {
-        // Absolute Numbering (AoT P2 / Bleach P2)
-        if (prequelEps > 0) {
-           primaryEps.push(input.episode + prequelEps);
-        }
-        // Normal Numbering (AoT S2)
-        primaryEps.push(input.episode);
-        
-        // P1 Blocking Logic
-        if (isPrequelSlug) {
-           primaryEps = primaryEps.filter(e => e !== null && e > input.episode);
-        }
+        primaryEps = [input.episode]; // e.g., Ep 1
+        if (prequelEps > 0) primaryEps.push(input.episode + prequelEps); // e.g., Ep 17
+        if (isPrequelSlug) primaryEps = primaryEps.filter(e => e !== null && e > input.episode);
       }
-      
       primaryEps = [...new Set(primaryEps.filter(e => e === null || e > 0))];
 
       console.log(`[EXTRACT] Phase 1 on ${base} | Eps: [${primaryEps.join(', ')}]`);
       let results = await Promise.all(primaryEps.map(ep => fetchTatakaiWatch(base, ep, !!input.is_movie).then(sources => ({ ep, sources }))));
       let valid = results.find(r => r.sources && r.sources.length > 0);
 
-      // 🎯 Phase 2: Tolerance Fallback (±1)
+      // 🎯 PHASE 2: Lazy Fallback (Only +1 shifts, Max 2 calls)
       if (!valid && !input.is_movie) {
-        let fallbackEps: (number|null)[] = [input.episode + 1, input.episode - 1];
-        if (prequelEps > 0) fallbackEps.push(input.episode + prequelEps + 1, input.episode + prequelEps - 1);
+        let fallbackEps: (number|null)[] = [input.episode + 1];
+        if (prequelEps > 0) fallbackEps.push(input.episode + prequelEps + 1);
         
         if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e !== null && e > input.episode);
         fallbackEps = [...new Set(fallbackEps.filter(e => e !== null && e > 0 && !primaryEps.includes(e)))];
@@ -101,7 +88,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
       if (valid) {
         console.log(`[EXTRACT] ✓ Success: ${base} | Ep: ${valid.ep}`);
         const finalOffset = input.is_movie ? 0 : ((valid.ep || 0) - input.episode);
-        await setCache(resolvedCacheKey, { bestSlug: base, offset: finalOffset }, 86400 * 7); // ৭ দিন ক্যাশ
+        await setCache(resolvedCacheKey, { bestSlug: base, offset: finalOffset }, 86400 * 7); 
         return valid.sources!;
       }
     }
