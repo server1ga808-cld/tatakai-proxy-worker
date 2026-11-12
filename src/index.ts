@@ -19,7 +19,6 @@ export default {
 
     let input: ProxyInput;
     try {
-      // 🎯 Safe JSON Parsing
       input = await request.json();
     } catch {
       return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { 
@@ -28,19 +27,15 @@ export default {
     }
 
     if (!input?.title || input.episode === undefined || !input.anilist_id) {
-      return new Response(JSON.stringify({ error: 'Missing parameters (title, episode, anilist_id)' }), { 
+      return new Response(JSON.stringify({ error: 'Missing parameters' }), { 
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       });
     }
 
     try {
-      // ১. সঠিক স্লাগ খোঁজা
       const candidates = await getCandidateSlugs(input);
-      
-      // ২. প্যারালাল প্রোবিং এবং ফ্যালব্যাক
       const streams = await extractStreams(candidates, input);
 
-      // 🎯 Deduplication (url এর ওপর ভিত্তি করে)
       const uniqueStreamsMap = new Map<string, typeof streams[0]>();
       for (const s of streams) {
         if (!uniqueStreamsMap.has(s.url)) {
@@ -48,14 +43,18 @@ export default {
         }
       }
 
-      // ৩. ফাইনাল রেসপন্স
       const formattedStreams = Array.from(uniqueStreamsMap.values()).map(s => ({
         server: s.server,
         url: s.url,
-        source: 'tatakai-hybrid'
+        source: 'tatakai-final'
       }));
 
-      return new Response(JSON.stringify({ hindi: formattedStreams }), {
+      const langKey = input.preferred_lang || 'hindi';
+
+      return new Response(JSON.stringify({ 
+        [langKey]: formattedStreams, 
+        hindi: formattedStreams      
+      }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
 
