@@ -6,7 +6,6 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    // 🎯 Timeout increased to 10s for Render sleep
     const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 10000);
     if (!res.ok) return [];
     const json: any = await res.json();
@@ -19,10 +18,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   
   const titleToUse = aniMeta?.current.title || input.title;
   const romajiToUse = aniMeta?.current.romajiTitle || input.romaji_title || '';
-  const synonyms = aniMeta?.synonyms || [];
   const rootTitle = getRootTitle(titleToUse);
   
-  const queries = [...new Set([titleToUse, romajiToUse, rootTitle, ...synonyms].filter(q => q && q.length > 2))];
+  // 🎯 Strict 3-Queries Only (No synonyms to save Render API)
+  const queries = [...new Set([titleToUse, romajiToUse, rootTitle].filter(q => q && q.length > 2))].slice(0, 3);
   const cacheKey = `search-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
@@ -52,13 +51,17 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     let finalScore = data.score;
     if (input.is_movie && data.cand.type.toUpperCase() !== 'MOVIE') finalScore -= 0.3;
     if (!input.is_movie && data.cand.type.toUpperCase() === 'MOVIE') finalScore -= 0.3;
-    if (finalScore < 0.15) continue; 
+
+    // 🎯 Strict Threshold (0.35)
+    if (finalScore < 0.35) continue; 
 
     scored.push({ slug, title: data.cand.title, type: data.cand.type, score: finalScore, derivedBaseName: slugify(romajiToUse) !== slug ? slugify(romajiToUse) : undefined });
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const result = scored.slice(0, 3);
-  await setCache(cacheKey, result, 86400); // ১ দিন ক্যাশ
+  
+  // 🎯 Max 2 Candidates (Save Render API)
+  const result = scored.slice(0, 2);
+  await setCache(cacheKey, result, 86400); 
   return result;
 }
