@@ -7,7 +7,7 @@ const ANILIST_ENDPOINTS = [
   "https://graphql.anilist.co"
 ];
 
-const CACHE_VERSION = "v12-dynamic"; 
+const CACHE_VERSION = "v13-clean-test"; 
 const cache = new Map<string, { data: AniListMeta | null; expiry: number }>();
 
 interface MediaNode {
