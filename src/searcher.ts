@@ -3,26 +3,20 @@ import { getAniListMeta } from './anilist';
 import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
-const DESI_BASE = "https://www.desidubanime.me";
 
-// DesiDub Native Search (যদি Tatakai ডাউন থাকে)
-async function searchDesiNative(query: string): Promise<DesiSearchResult[]> {
+async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    const url = `${DESI_BASE}/wp-json/kiranime/v1/anime/search?query=${encodeURIComponent(query)}`;
-    const res = await fetchWithTimeout(url, { headers: { "User-Agent": "Mozilla/5.0" } }, 6000);
-    if (!res.ok) return [];
-    
-    const json: any = await res.json();
-    const html = json?.result || '';
-    const regex = /href="https:\/\/www\.desidubanime\.me\/anime\/([^/]+)\/".*?<span class="group-data-\[language=jp\]\/body:hidden"[^>]*>([^<]+)<\/span>/gs;
-    
-    const results: DesiSearchResult[] = [];
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      results.push({ id: match[1], title: match[2].trim(), type: 'TV', url: '' });
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
+    if (!res.ok) {
+      console.log(`[SEARCH] Tatakai Error: ${res.status}`);
+      return [];
     }
-    return results;
-  } catch { return []; }
+    const json: any = await res.json();
+    return json?.data?.results || [];
+  } catch (e: any) {
+    console.log(`[SEARCH] Tatakai Fetch Failed: ${e.message}`);
+    return [];
+  }
 }
 
 export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]> {
@@ -30,37 +24,39 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   
   const titleToUse = aniMeta?.current.title || input.title;
   const romajiToUse = aniMeta?.current.romajiTitle || input.romaji_title || '';
-  const rootTitle = getRootTitle(titleToUse);
-  const romajiSlug = slugify(romajiToUse);
+  const synonyms = aniMeta?.synonyms || [];
   
-  const queries = [...new Set([titleToUse, romajiToUse, rootTitle].filter(q => q && q.length > 2))];
+  const romajiSlug = slugify(romajiToUse);
+  const rootTitle = getRootTitle(titleToUse);
+  
+  const queries = [...new Set([titleToUse, romajiToUse, rootTitle, ...synonyms].filter(q => q && q.length > 2))];
+  console.log(`[SEARCH] Queries:`, queries);
+
+  // ১. Tatakai Search API
+  const tatakaiPromises = queries.map(q => searchTatakai(q));
+  const tatakaiResults = await Promise.all(tatakaiPromises);
+  
+  // 🎯 ফ্ল্যাট করা হচ্ছে (Array of Arrays -> Flat Array)
+  const flatResults = tatakaiResults.flat();
+  console.log(`[SEARCH] Total raw results from Tatakai: ${flatResults.length}`);
+
+  if (flatResults.length === 0) return [];
 
   const scoreMap = new Map<string, { cand: DesiSearchResult, score: number }>();
 
-  // ১. Tatakai Search
-  const tatakaiPromises = queries.map(q => 
-    fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(q)}`, {}, 8000)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => data?.data?.results || [])
-      .catch(() => [])
-  );
-  
-  const tatakaiResults = await Promise.all(tatakaiPromises);
-  let flatResults = tatakaiResults.flat();
-
-  // ২. Fallback: Native Search (যদি Tatakai খালি থাকে)
-  if (flatResults.length === 0) {
-    console.log(`[SEARCH] Tatakai empty, trying Native...`);
-    const nativeResults = await Promise.all(queries.map(q => searchDesiNative(q)));
-    flatResults = nativeResults.flat();
-  }
-
   for (const cand of flatResults) {
-    if (!scoreMap.has(cand.id)) {
-      let score = Math.max(
-        getSimilarityScore(titleToUse, cand.title),
-        getSimilarityScore(romajiToUse, cand.title)
-      );
+    if (!cand || !cand.id) continue;
+
+    let score = Math.max(
+      getSimilarityScore(titleToUse, cand.title),
+      getSimilarityScore(romajiToUse, cand.title),
+      getSimilarityScore(rootTitle, cand.title)
+    );
+
+    // রোমাজি টাইটেল ম্যাচ করলে বোনাস
+    if (getSimilarityScore(romajiToUse, cand.title) > 0.8) score += 0.5;
+
+    if (!scoreMap.has(cand.id) || score > scoreMap.get(cand.id)!.score) {
       scoreMap.set(cand.id, { cand, score });
     }
   }
@@ -81,5 +77,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   }
 
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, 3); // টপ ৩ ক্যান্ডিডেট
+  console.log(`[SEARCH] Final Candidates:`, scored.slice(0, 3).map(c => `${c.slug} (${c.score.toFixed(1)})`));
+  
+  return scored.slice(0, 3);
 }
