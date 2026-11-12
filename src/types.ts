@@ -1,4 +1,3 @@
-// ─── Input ─────────────────────────────────────────────
 export interface ProxyInput {
   title: string;
   romaji_title?: string;
@@ -8,42 +7,39 @@ export interface ProxyInput {
   year?: number;
   season?: string;
   anilist_id: number;
+  preferred_lang?: string; // ডিফল্ট: hindi/desi
 }
 
-// ─── AniList ───────────────────────────────────────────
 export type Format = 'TV' | 'TV_SHORT' | 'MOVIE' | 'OVA' | 'ONA' | 'SPECIAL' | string;
 
 export interface ChainSeason {
   anilistId: number;
   title: string;
   romajiTitle: string;
-  synonyms: string[];
   episodes: number;
   format: Format;
-  relationType: 'CURRENT' | 'PREQUEL' | 'SEQUEL';
 }
 
 export interface AniListMeta {
   current: ChainSeason;
-  prequels: ChainSeason[];
-  immediatePrequelEpisodes: number; // এটাই আমাদের মেইন ম্যাথ (অফসেট)
+  timeline: ChainSeason[];
+  immediatePrequelEpisodes: number; 
   synonyms: string[];
 }
 
-// ─── Tatakai / Desi Data ───────────────────────────────
 export interface DesiSearchResult {
-  id: string; // slug (e.g., "demon-slayer-season-2")
+  id: string; 
   title: string;
   type: string;
   url: string;
 }
 
 export interface Candidate {
-  slug: string;       // e.g., "demon-slayer-season-2"
+  slug: string;       
   title: string;
   type: string;
   score: number;
-  derivedBaseName?: string; // e.g., "kimetsu-no-yaiba-yuukaku-hen-season-2"
+  derivedBaseName?: string; 
 }
 
 export interface DesiSource {
