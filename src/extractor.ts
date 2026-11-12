@@ -8,13 +8,16 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
-    const res = await fetchWithTimeout(url, {}, 6000); 
+    
+    // 🎯 Timeout increased to 10s
+    const res = await fetchWithTimeout(url, {}, 10000); 
     if (!res.ok) return null;
     
     const json: any = await res.json();
     const rawSources = json?.data?.sources || [];
     const title = json?.data?.title || "";
     
+    // Title Verification with relaxed regex
     if (epNum !== null && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
     
     const validSources: DesiSource[] = [];
@@ -46,7 +49,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   const aniMeta = await getAniListMeta(input.anilist_id);
   const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
 
-  // 🎯 Dynamic Prequels from Timeline
+  // 🎯 Dynamic Prequels Check from Timeline
   const targetIndex = aniMeta?.timeline.findIndex(t => t.anilistId === input.anilist_id) ?? -1;
   const prequelTitles = targetIndex > 0 ? aniMeta!.timeline.slice(0, targetIndex).map(t => t.romajiTitle) : [];
 
@@ -56,26 +59,37 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     for (const base of bases) {
       const isPrequelSlug = prequelTitles.some(p => getSimilarityScore(p, base.replace(/-/g, ' ')) > 0.8);
 
-      // 🎯 Phase 1: Primary Targets [ep, ep+prequelEps]
+      // 🎯 Phase 1: Primary Targets
       let primaryEps: (number | null)[] = [];
-      if (input.is_movie) primaryEps = [null, 1];
-      else {
-        primaryEps = [input.episode];
-        if (prequelEps > 0) primaryEps.push(input.episode + prequelEps);
-        if (isPrequelSlug) primaryEps = primaryEps.filter(e => e !== null && e > input.episode);
+      if (input.is_movie) {
+        primaryEps = [null, 1];
+      } else {
+        // Absolute Numbering (AoT P2 / Bleach P2)
+        if (prequelEps > 0) {
+           primaryEps.push(input.episode + prequelEps);
+        }
+        // Normal Numbering (AoT S2)
+        primaryEps.push(input.episode);
+        
+        // P1 Blocking Logic
+        if (isPrequelSlug) {
+           primaryEps = primaryEps.filter(e => e !== null && e > input.episode);
+        }
       }
+      
       primaryEps = [...new Set(primaryEps.filter(e => e === null || e > 0))];
 
       console.log(`[EXTRACT] Phase 1 on ${base} | Eps: [${primaryEps.join(', ')}]`);
       let results = await Promise.all(primaryEps.map(ep => fetchTatakaiWatch(base, ep, !!input.is_movie).then(sources => ({ ep, sources }))));
       let valid = results.find(r => r.sources && r.sources.length > 0);
 
-      // 🎯 Phase 2: Tolerance Fallback [ep±1, ep+prequelEps±1]
+      // 🎯 Phase 2: Tolerance Fallback (±1)
       if (!valid && !input.is_movie) {
-        let fallbackEps = [input.episode + 1, input.episode - 1];
+        let fallbackEps: (number|null)[] = [input.episode + 1, input.episode - 1];
         if (prequelEps > 0) fallbackEps.push(input.episode + prequelEps + 1, input.episode + prequelEps - 1);
-        if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e > input.episode);
-        fallbackEps = [...new Set(fallbackEps.filter(e => e > 0 && !primaryEps.includes(e)))];
+        
+        if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e !== null && e > input.episode);
+        fallbackEps = [...new Set(fallbackEps.filter(e => e !== null && e > 0 && !primaryEps.includes(e)))];
 
         if (fallbackEps.length > 0) {
           console.log(`[EXTRACT] Phase 2 Fallback on ${base} | Eps: [${fallbackEps.join(', ')}]`);
