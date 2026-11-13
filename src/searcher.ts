@@ -57,8 +57,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
   
-  // 🎯 FIXED: Cache bumped to v29 to clear stale Infinity Castle cache
-  const cacheKey = `search-v29-${slugify(titleToUse)}`;
+  // 🎯 FIXED: Bumped to v30 to bypass poisoned cache
+  const cacheKey = `search-v30-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
