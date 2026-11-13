@@ -6,7 +6,7 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 10000);
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
     if (!res.ok) return [];
     const json: any = await res.json();
     return json?.data?.results || [];
@@ -15,7 +15,8 @@ async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 8000);
+    // 🎯 FIXED: Timeout set to 5s (safe for Render cold starts)
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 5000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
     const episodes = data?.data?.episodes || [];
@@ -36,46 +37,51 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const queries = new Set<string>();
   queries.add(titleToUse);
   if (romajiToUse) queries.add(romajiToUse);
-  if (rootTitle) queries.add(rootTitle);
+  if (rootTitle && rootTitle !== titleToUse) queries.add(rootTitle);
 
-  // 🎯 Clean Query (Remove "Part N" or "Season N" to prevent AoT P2 search fail)
   const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
-  if (cleanSearchQuery) queries.add(cleanSearchQuery);
+  if (cleanSearchQuery && cleanSearchQuery !== rootTitle && cleanSearchQuery !== titleToUse) queries.add(cleanSearchQuery);
 
+  // 🎯 FIXED: Prevent "Final Season Season 4" double season query
   const seasonMatch = titleToUse.match(/season\s*(\d+)/i) || (input.season ? [null, String(input.season)] : null);
-  if (seasonMatch && seasonMatch[1]) {
+  if (seasonMatch && seasonMatch[1] && !rootTitle.toLowerCase().includes('season')) {
     queries.add(`${rootTitle} Season ${seasonMatch[1]}`);
   } else if (titleToUse === rootTitle) {
     queries.add(`${rootTitle} Season 1`);
   }
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 4);
-  const cacheKey = `search-${slugify(titleToUse)}`;
+  const cacheKey = `search-v25-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
 
   const tatakaiResults = await Promise.all(finalQueries.map(q => searchTatakai(q)));
-  const flatResults = tatakaiResults.flat();
 
   let scored: Candidate[] = [];
+  const scoreMap = new Map<string, { cand: DesiSearchResult, score: number }>();
+  const reqHasSeason = /season|part|cour|arc|village|movie/i.test(titleToUse);
 
-  if (flatResults.length > 0) {
-    const scoreMap = new Map<string, { cand: DesiSearchResult, score: number }>();
-    
-    // 🎯 Symmetric check includes Arc, Village, Movie to prevent False Penalties
-    const reqHasSeason = /season|part|cour|arc|village|movie/i.test(titleToUse);
-    
-    for (const cand of flatResults) {
+  // 🎯 Track Romaji Index for Score Boost
+  const romajiIndex = finalQueries.indexOf(romajiToUse);
+
+  for (let i = 0; i < finalQueries.length; i++) {
+    const query = finalQueries[i];
+    const results = tatakaiResults[i];
+
+    for (const cand of results) {
       if (!cand || !cand.id) continue;
       
-      // 🎯 Synonyms added to Scoring Array
       let score = Math.max(
         getSimilarityScore(titleToUse, cand.title), 
         getSimilarityScore(romajiToUse, cand.title), 
-        getSimilarityScore(rootTitle, cand.title),
-        ...(aniMeta?.synonyms || []).map((s: string) => getSimilarityScore(s, cand.title))
+        getSimilarityScore(rootTitle, cand.title)
       );
+
+      // 🎯 Romaji Query Boost (+0.4 if candidate came from Romaji search)
+      const cameFromRomaji = (romajiIndex !== -1 && tatakaiResults[romajiIndex].some(r => r.id === cand.id));
+      if (cameFromRomaji) score += 0.4;
+      else if (query === titleToUse) score += 0.2;
       
       if (input.is_movie && cand.type.toUpperCase() !== 'MOVIE') score -= 0.2;
       if (!input.is_movie && cand.type.toUpperCase() === 'MOVIE') score -= 0.5;
@@ -87,8 +93,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         scoreMap.set(cand.id, { cand, score });
       }
     }
+  }
 
+  if (scoreMap.size > 0) {
     for (const [slug, data] of scoreMap) {
+      // 🎯 FIXED: Reverted to strict threshold 0.35
       if (data.score < 0.35) continue; 
       scored.push({ slug, title: data.cand.title, type: data.cand.type, score: data.score });
     }
@@ -96,7 +105,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  // 🎯 Root Fallback: Falls back to Root Title slug instead of Romaji (AoT P2 fix)
   if (scored.length === 0 && (rootTitle || romajiToUse || titleToUse)) {
     const fallbackSlug = slugify(rootTitle || romajiToUse || titleToUse);
     scored.push({ slug: fallbackSlug, title: rootTitle || romajiToUse || titleToUse, type: input.is_movie ? 'MOVIE' : 'TV', score: 1 });
