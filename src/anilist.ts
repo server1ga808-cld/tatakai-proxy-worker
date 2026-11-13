@@ -6,7 +6,7 @@ const ANILIST_ENDPOINTS = [
   "https://graphql.anilist.co"
 ];
 
-const CACHE_VERSION = "v20-god-mode"; 
+const CACHE_VERSION = "v22-god-mode-final"; 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
 async function gqlRequest(query: string, variables: any): Promise<any> {
@@ -21,7 +21,6 @@ async function gqlRequest(query: string, variables: any): Promise<any> {
   return null;
 }
 
-// 🎯 Single Query containing Current + Prequel details
 const SINGLE_CALL_QUERY = `
   query ($id: Int) {
     Media(id: $id, type: ANIME) {
@@ -48,7 +47,6 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
   
   const currentMedia = data.Media;
   
-  // 🎯 1-Call Magic: Extract Immediate Prequel directly from first query
   const prequelEdge = currentMedia.relations?.edges?.find(
     (e: any) => e.relationType === 'PREQUEL' && ALLOWED_FORMATS.includes(e.node.format)
   );
@@ -70,16 +68,15 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
 
   const meta: AniListMeta = {
     current: toChainSeason(currentMedia),
-    timeline: [ // We mock the timeline just to keep types happy for P1 blocking
+    timeline: [
        ...(prequelEdge ? [toChainSeason(prequelEdge.node)] : []),
        toChainSeason(currentMedia)
     ],
     immediatePrequelEpisodes: prequelEps,
-    synonyms: filterSynonyms(currentMedia.synonyms),
-    // Storing prequel titles directly in synonyms/current to help extractor
-    currentPrequelTitles: [prequelTitleEn, prequelTitleRo].filter(Boolean) 
-  } as AniListMeta; // Type cast to include custom field
+    currentPrequelTitles: [prequelTitleEn, prequelTitleRo].filter(Boolean),
+    synonyms: filterSynonyms(currentMedia.synonyms)
+  };
 
-  await setCache(cacheKey, meta, 86400 * 7); // ৭ দিন ক্যাশ
+  await setCache(cacheKey, meta, 86400 * 7); 
   return meta;
 }
