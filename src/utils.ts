@@ -15,6 +15,7 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   }
 }
 
+// 🎯 Ensure these are EXPORTED
 export async function getCache<T>(key: string): Promise<T | null> {
   try {
     const res = await caches.default.match(new Request(`https://cache.internal/${key}`));
@@ -37,7 +38,6 @@ export function isAllowedServer(serverName: string): boolean {
   return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly') || s.includes('ruby');
 }
 
-// 🎯 New Function: Cleans raw HTML from Ruby server URLs
 export function cleanIframeUrl(url: string): string {
   if (!url) return '';
   if (url.includes('<iframe') || url.includes('<IFRAME')) {
@@ -84,7 +84,6 @@ export function getSimilarityScore(a: string, b: string): number {
 export function verifyEpisodeNumber(desiTitle: string, targetEp: number, isMovie: boolean = false): boolean {
   if (isMovie) return true;
   if (!desiTitle) return false;
-  
   const normalized = desiTitle.toLowerCase();
   
   let match = normalized.match(/(?:episode|ep)\.?\s*[-:/\s]*\s*0?(\d+)(?!\d)/i);
