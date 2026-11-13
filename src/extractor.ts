@@ -1,6 +1,7 @@
 import type { Candidate, ProxyInput, DesiSource } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache, cleanIframeUrl } from './utils';
+import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, cleanIframeUrl } from './utils';
+import { getCache, setCache, getResolvedCacheKey, TTL } from './cache';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -9,7 +10,6 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
     
-    // 🎯 FIXED: Increased timeout to 10s (10000ms) for Render cold starts
     const res = await fetchWithTimeout(url, {}, 10000); 
     if (!res.ok) return null;
     
@@ -37,8 +37,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  // 🎯 FIXED: Bumped to v31
-  const resolvedCacheKey = `resolved-v31-${input.anilist_id}-${preferredLang}`;
+  const resolvedCacheKey = getResolvedCacheKey(input.anilist_id, preferredLang);
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
@@ -106,7 +105,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
         console.log(`[EXTRACT] ✓ Success: ${base} | Ep: ${valid.ep}`);
         const finalOffset = input.is_movie ? 0 : ((valid.ep || 0) - input.episode);
         
-        await setCache(resolvedCacheKey, { bestSlug: base, offset: finalOffset }, 86400 * 7); 
+        await setCache(resolvedCacheKey, { bestSlug: base, offset: finalOffset }, TTL.RESOLVED_STREAM); 
         return valid.sources!;
       }
     }
@@ -114,4 +113,4 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   
   console.log(`[EXTRACT] ❌ All bases and offsets failed.`);
   return [];
-}
+    }
