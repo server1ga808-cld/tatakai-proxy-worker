@@ -7,7 +7,8 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
+    // 🎯 8s → 7s (safe: real is 1s, cold start can hit 5-6s)
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 7000);
     if (!res.ok) return [];
     const json: any = await res.json();
     return json?.data?.results || [];
@@ -16,7 +17,8 @@ async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 10000);
+    // 🎯 10s → 8s (safe: real is 1.4s, cold start can hit 6-7s)
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 8000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
     const episodes = data?.data?.episodes || [];
@@ -105,7 +107,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  // 🎯 Smart fallback for movies (last resort if search returns nothing)
+  // 🎯 Smart fallback for movies
   if (scored.length === 0) {
     if (input.is_movie) {
       if (romajiToUse) scored.push({ slug: slugify(romajiToUse), title: romajiToUse, type: 'MOVIE', score: 1 });
