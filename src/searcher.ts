@@ -1,6 +1,7 @@
 import type { ProxyInput, Candidate, DesiSearchResult } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache, extractBaseNameFromEpisodeId } from './utils';
+import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, extractBaseNameFromEpisodeId } from './utils';
+import { getCache, setCache, getSearchCacheKey, TTL } from './cache';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -38,12 +39,11 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   if (romajiToUse) queries.add(romajiToUse);
   if (rootTitle && rootTitle !== titleToUse) queries.add(rootTitle);
 
-  // 🎯 MOVIE QUERY FIX (Sanitize long titles)
+  // 🎯 MOVIE QUERY FIX
   if (input.is_movie) {
     const baseMovieQuery = rootTitle.split(':')[0].replace(/-/g, ' ').trim();
     if (baseMovieQuery) queries.add(`${baseMovieQuery} Movie`);
     if (titleToUse.includes('Infinity Castle')) queries.add(`${baseMovieQuery} Infinity Castle`);
-    // Add specific romaji keyword for exact Tatakai match
     if (romajiToUse) queries.add(romajiToUse);
   }
 
@@ -56,9 +56,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
   
-  // 🎯 FIXED: Bumped to v32 to bypass poisoned cache
-  const cacheKey = `search-v32-${slugify(titleToUse)}`;
-  
+  const cacheKey = getSearchCacheKey(slugify(titleToUse));
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
 
@@ -107,7 +105,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  // 🎯 Smart fallback for movies
+  // 🎯 Smart fallback for movies (last resort if search returns nothing)
   if (scored.length === 0) {
     if (input.is_movie) {
       if (romajiToUse) scored.push({ slug: slugify(romajiToUse), title: romajiToUse, type: 'MOVIE', score: 1 });
@@ -127,6 +125,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored[i].derivedBaseName = bases[i] || fallbackBase || scored[i].slug;
   }
 
-  await setCache(cacheKey, scored, 86400); 
+  await setCache(cacheKey, scored, TTL.SEARCH_RESULTS); 
   return scored;
 }
