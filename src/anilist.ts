@@ -6,7 +6,7 @@ const ANILIST_ENDPOINTS = [
   "https://graphql.anilist.co"
 ];
 
-const CACHE_VERSION = "v22-god-mode-final"; 
+const CACHE_VERSION = "v30-final"; 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
 async function gqlRequest(query: string, variables: any): Promise<any> {
