@@ -40,11 +40,19 @@ export function isAllowedServer(serverName: string): boolean {
 
 export function cleanIframeUrl(url: string): string {
   if (!url) return '';
-  if (url.includes('<iframe') || url.includes('<IFRAME')) {
-    const match = url.match(/src=['"](.+?)['"]/i);
-    return match ? match[1] : url;
+  let cleaned = url.trim();
+  
+  if (cleaned.includes('<iframe') || cleaned.includes('<IFRAME')) {
+    const match = cleaned.match(/src=['"](.+?)['"]/i);
+    if (match) cleaned = match[1].trim();
   }
-  return url;
+  
+  // 🎯 FIXED: Add https: protocol if URL starts with //
+  if (cleaned.startsWith('//')) {
+    cleaned = 'https:' + cleaned;
+  }
+  
+  return cleaned;
 }
 
 const ROMAN_MAP: Record<string, string> = { 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5', 'vi': '6', 'vii': '7', 'viii': '8', 'ix': '9', 'x': '10' };
