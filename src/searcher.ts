@@ -41,12 +41,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
   if (cleanSearchQuery && cleanSearchQuery !== rootTitle && cleanSearchQuery !== titleToUse) queries.add(cleanSearchQuery);
 
-  // 🎯 MOVIE QUERY FIX: Simplified queries for movies
+  // 🎯 MOVIE QUERY FIX
   if (input.is_movie) {
-    // "Demon Slayer: Kimetsu no Yaiba - The Movie: Infinity Castle" -> "Demon Slayer Movie"
     const baseMovieQuery = rootTitle.split(':')[0].replace(/-/g, ' ').trim();
-    queries.add(`${baseMovieQuery} Movie`);
-    // Add specific keyword if it exists in title (e.g. "Infinity Castle")
+    if (baseMovieQuery) queries.add(`${baseMovieQuery} Movie`);
     if (titleToUse.includes('Infinity Castle')) queries.add(`${baseMovieQuery} Infinity Castle`);
   }
 
@@ -58,7 +56,9 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   }
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
-  const cacheKey = `search-v28-${slugify(titleToUse)}`;
+  
+  // 🎯 FIXED: Cache bumped to v29 to clear stale Infinity Castle cache
+  const cacheKey = `search-v29-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
