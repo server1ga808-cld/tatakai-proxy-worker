@@ -1,4 +1,4 @@
-import type { AniListMeta, ChainSeason, Format } from './types';
+import type { AniListMeta, ChainSeason } from './types';
 import { fetchWithTimeout } from './utils';
 import { getCache, setCache, getAniListCacheKey, TTL } from './cache';
 
@@ -9,15 +9,36 @@ const ANILIST_ENDPOINTS = [
 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
+// 🎯 Health-Tracking: Remember which endpoint works to avoid double calls
+let healthyEndpointIdx = 0;
+
+async function tryEndpoint(idx: number, query: string, variables: any, timeoutMs: number): Promise<any | null> {
+  try {
+    const res = await fetchWithTimeout(ANILIST_ENDPOINTS[idx], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables })
+    }, timeoutMs);
+    if (!res.ok) return null;
+    const json: any = await res.json();
+    if (!json?.data?.Media) return null;
+    return json.data;
+  } catch { return null; }
+}
+
 async function gqlRequest(query: string, variables: any): Promise<any> {
-  for (const endpoint of ANILIST_ENDPOINTS) {
-    try {
-      const res = await fetchWithTimeout(endpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, variables })
-      }, 8000);
-      if (res.ok) { const json: any = await res.json(); if (json?.data) return json.data; }
-    } catch { }
+  // 🎯 Step 1: Try current healthy endpoint with 6s timeout
+  let result = await tryEndpoint(healthyEndpointIdx, query, variables, 6000);
+  if (result) return result;
+
+  // 🎯 Step 2: Try backup endpoint with 6s timeout
+  const backupIdx = 1 - healthyEndpointIdx;
+  result = await tryEndpoint(backupIdx, query, variables, 6000);
+  if (result) {
+    healthyEndpointIdx = backupIdx; // Mark backup as healthy for future
+    return result;
   }
+
   return null;
 }
 
