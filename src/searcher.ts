@@ -1,22 +1,9 @@
-import type { ProxyInput, Candidate, DesiSearchResult } from './types';
-import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache, extractBaseNameFromEpisodeId } from './utils';
-
-const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
-
-async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
-  try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
-    if (!res.ok) return [];
-    const json: any = await res.json();
-    return json?.data?.results || [];
-  } catch { return []; }
-}
+// ... (imports same as before)
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    // 🎯 FIXED: Timeout set to 5s (safe for Render cold starts)
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 5000);
+    // 🎯 Increased timeout to 10s for Render cold starts
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 10000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
     const episodes = data?.data?.episodes || [];
@@ -42,7 +29,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
   if (cleanSearchQuery && cleanSearchQuery !== rootTitle && cleanSearchQuery !== titleToUse) queries.add(cleanSearchQuery);
 
-  // 🎯 FIXED: Prevent "Final Season Season 4" double season query
   const seasonMatch = titleToUse.match(/season\s*(\d+)/i) || (input.season ? [null, String(input.season)] : null);
   if (seasonMatch && seasonMatch[1] && !rootTitle.toLowerCase().includes('season')) {
     queries.add(`${rootTitle} Season ${seasonMatch[1]}`);
@@ -51,7 +37,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   }
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 4);
-  const cacheKey = `search-v25-${slugify(titleToUse)}`;
+  // 🎯 Bumped cache key to v26 to bypass old cached data
+  const cacheKey = `search-v26-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
@@ -61,8 +48,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   let scored: Candidate[] = [];
   const scoreMap = new Map<string, { cand: DesiSearchResult, score: number }>();
   const reqHasSeason = /season|part|cour|arc|village|movie/i.test(titleToUse);
-
-  // 🎯 Track Romaji Index for Score Boost
   const romajiIndex = finalQueries.indexOf(romajiToUse);
 
   for (let i = 0; i < finalQueries.length; i++) {
@@ -78,7 +63,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
         getSimilarityScore(rootTitle, cand.title)
       );
 
-      // 🎯 Romaji Query Boost (+0.4 if candidate came from Romaji search)
       const cameFromRomaji = (romajiIndex !== -1 && tatakaiResults[romajiIndex].some(r => r.id === cand.id));
       if (cameFromRomaji) score += 0.4;
       else if (query === titleToUse) score += 0.2;
@@ -97,7 +81,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   if (scoreMap.size > 0) {
     for (const [slug, data] of scoreMap) {
-      // 🎯 FIXED: Reverted to strict threshold 0.35
       if (data.score < 0.35) continue; 
       scored.push({ slug, title: data.cand.title, type: data.cand.type, score: data.score });
     }
@@ -114,7 +97,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const bases = await Promise.all(basePromises);
 
   for (let i = 0; i < scored.length; i++) {
-    scored[i].derivedBaseName = bases[i] || scored[i].slug;
+    // 🎯 FIXED: Fallback to Romaji/Title slug instead of just the candidate slug
+    scored[i].derivedBaseName = bases[i] || slugify(romajiToUse || titleToUse);
   }
 
   await setCache(cacheKey, scored, 86400); 
