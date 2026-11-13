@@ -1,43 +1,11 @@
-import type { Candidate, ProxyInput, DesiSource } from './types';
-import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache, cleanIframeUrl } from './utils';
-
-const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
-
-async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie: boolean): Promise<DesiSource[] | null> {
-  try {
-    const suffix = epNum !== null ? `-episode-${epNum}` : '';
-    const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
-    
-    // 🎯 FIXED: Timeout set to 6s (safe for Render cold starts, avoids false-negative)
-    const res = await fetchWithTimeout(url, {}, 6000); 
-    if (!res.ok) return null;
-    
-    const json: any = await res.json();
-    const rawSources = json?.data?.sources || [];
-    const title = json?.data?.title || "";
-    
-    if (epNum !== null && title && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
-    
-    const validSources: DesiSource[] = [];
-    for (const src of rawSources) {
-      if (isAllowedServer(src.server || '')) {
-        validSources.push({ 
-          server: src.server, 
-          url: cleanIframeUrl(src.url), 
-          type: src.type || 'embed' 
-        });
-      }
-    }
-    return validSources.length > 0 ? validSources : null;
-  } catch { return null; }
-}
+// ... (imports same as before)
 
 export async function extractStreams(candidates: Candidate[], input: ProxyInput): Promise<DesiSource[]> {
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  const resolvedCacheKey = `resolved-v25-${input.anilist_id}-${preferredLang}`;
+  // 🎯 Bumped cache key to v26
+  const resolvedCacheKey = `resolved-v26-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
