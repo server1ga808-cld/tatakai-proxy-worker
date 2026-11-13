@@ -1,12 +1,12 @@
 import type { AniListMeta, ChainSeason, Format } from './types';
-import { fetchWithTimeout, getCache, setCache } from './utils';
+import { fetchWithTimeout } from './utils';
+import { getCache, setCache, getAniListCacheKey, TTL } from './cache';
 
 const ANILIST_ENDPOINTS = [
   "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql",
   "https://graphql.anilist.co"
 ];
 
-const CACHE_VERSION = "v30-final"; 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
 async function gqlRequest(query: string, variables: any): Promise<any> {
@@ -38,7 +38,7 @@ const SINGLE_CALL_QUERY = `
 export async function getAniListMeta(anilistId: number): Promise<AniListMeta | null> {
   if (!anilistId) return null;
 
-  const cacheKey = `anilist-${CACHE_VERSION}-${anilistId}`;
+  const cacheKey = getAniListCacheKey(anilistId);
   const cached = await getCache<AniListMeta>(cacheKey);
   if (cached) return cached;
 
@@ -77,6 +77,6 @@ export async function getAniListMeta(anilistId: number): Promise<AniListMeta | n
     synonyms: filterSynonyms(currentMedia.synonyms)
   };
 
-  await setCache(cacheKey, meta, 86400 * 7); 
+  await setCache(cacheKey, meta, TTL.ANILIST_META); 
   return meta;
 }
