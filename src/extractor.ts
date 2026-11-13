@@ -8,7 +8,9 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
-    const res = await fetchWithTimeout(url, {}, 10000); 
+    
+    // 🎯 FIXED: Timeout set to 6s (safe for Render cold starts, avoids false-negative)
+    const res = await fetchWithTimeout(url, {}, 6000); 
     if (!res.ok) return null;
     
     const json: any = await res.json();
@@ -35,7 +37,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  const resolvedCacheKey = `resolved-${input.anilist_id}-${preferredLang}`;
+  const resolvedCacheKey = `resolved-v25-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
