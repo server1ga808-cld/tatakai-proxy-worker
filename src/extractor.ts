@@ -15,7 +15,7 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const rawSources = json?.data?.sources || [];
     const title = json?.data?.title || "";
     
-    if (epNum !== null && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
+    if (epNum !== null && title && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
     
     const validSources: DesiSource[] = [];
     for (const src of rawSources) {
@@ -33,36 +33,45 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
-    if (input.is_movie) {
-      const valid = (await Promise.all([null, 1].map(ep => fetchTatakaiWatch(cachedResolved.bestSlug, ep, true)))).find(r => r && r.length > 0);
-      if (valid) return valid;
-    } else {
-      const targetEp = input.episode + cachedResolved.offset;
-      const sources = await fetchTatakaiWatch(cachedResolved.bestSlug, targetEp, false);
-      if (sources) return sources;
+    const targetEp = input.is_movie ? null : (input.episode + cachedResolved.offset);
+    const sources = await fetchTatakaiWatch(cachedResolved.bestSlug, targetEp, !!input.is_movie);
+    if (sources) {
+      console.log(`[EXTRACT] ⚡ Cache Hit! Probed ${cachedResolved.bestSlug} | Ep: ${targetEp}`);
+      return sources;
     }
   }
 
   const aniMeta = await getAniListMeta(input.anilist_id);
   const prequelEps = aniMeta?.immediatePrequelEpisodes || 0;
-  
-  // 🎯 P1 Blocking logic using 1-Call prequel titles
-  const prequelTitles = (aniMeta as any)?.currentPrequelTitles || [];
+  const prequelTitles = aniMeta?.currentPrequelTitles || [];
+  const synonyms = aniMeta?.synonyms || [];
 
   for (const cand of candidates) {
-    const bases = [cand.slug, cand.derivedBaseName].filter(Boolean) as string[];
+    const bases = [...new Set([cand.derivedBaseName, cand.slug].filter(Boolean))] as string[];
     
     for (const base of bases) {
-      const isPrequelSlug = prequelTitles.some((p: string) => getSimilarityScore(p, base.replace(/-/g, ' ')) > 0.8);
+      const baseClean = base.replace(/-/g, ' ');
+      
+      const prequelScore = prequelTitles.length > 0 
+        ? Math.max(...prequelTitles.map((p: string) => getSimilarityScore(p, baseClean))) 
+        : 0;
+        
+      const currentScore = Math.max(
+        getSimilarityScore(aniMeta?.current.title || "", baseClean),
+        getSimilarityScore(aniMeta?.current.romajiTitle || "", baseClean),
+        ...synonyms.map((s: string) => getSimilarityScore(s, baseClean))
+      );
+      
+      const isPrequelSlug = prequelScore > 0.7 && prequelScore > currentScore;
 
-      // 🎯 PHASE 1: Primary Targets (Max 2 calls)
       let primaryEps: (number | null)[] = [];
       if (input.is_movie) {
         primaryEps = [null, 1];
       } else {
-        primaryEps = [input.episode]; // e.g., Ep 1
-        if (prequelEps > 0) primaryEps.push(input.episode + prequelEps); // e.g., Ep 17
-        if (isPrequelSlug) primaryEps = primaryEps.filter(e => e !== null && e > input.episode);
+        if (prequelEps > 0) primaryEps.push(input.episode + prequelEps);
+        primaryEps.push(input.episode); 
+        
+        if (isPrequelSlug) primaryEps = primaryEps.filter(e => e !== null && e > prequelEps);
       }
       primaryEps = [...new Set(primaryEps.filter(e => e === null || e > 0))];
 
@@ -70,12 +79,11 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
       let results = await Promise.all(primaryEps.map(ep => fetchTatakaiWatch(base, ep, !!input.is_movie).then(sources => ({ ep, sources }))));
       let valid = results.find(r => r.sources && r.sources.length > 0);
 
-      // 🎯 PHASE 2: Lazy Fallback (Only +1 shifts, Max 2 calls)
       if (!valid && !input.is_movie) {
         let fallbackEps: (number|null)[] = [input.episode + 1];
         if (prequelEps > 0) fallbackEps.push(input.episode + prequelEps + 1);
         
-        if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e !== null && e > input.episode);
+        if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e !== null && e > prequelEps);
         fallbackEps = [...new Set(fallbackEps.filter(e => e !== null && e > 0 && !primaryEps.includes(e)))];
 
         if (fallbackEps.length > 0) {
@@ -88,10 +96,13 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
       if (valid) {
         console.log(`[EXTRACT] ✓ Success: ${base} | Ep: ${valid.ep}`);
         const finalOffset = input.is_movie ? 0 : ((valid.ep || 0) - input.episode);
+        
         await setCache(resolvedCacheKey, { bestSlug: base, offset: finalOffset }, 86400 * 7); 
         return valid.sources!;
       }
     }
   }
+  
+  console.log(`[EXTRACT] ❌ All bases and offsets failed.`);
   return [];
 }
