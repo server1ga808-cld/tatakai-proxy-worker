@@ -57,8 +57,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
   
-  // 🎯 FIXED: Bumped to v30 to bypass poisoned cache
-  const cacheKey = `search-v30-${slugify(titleToUse)}`;
+  // 🎯 FIXED: Bumped to v31 to bypass poisoned cache
+  const cacheKey = `search-v31-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
@@ -108,9 +108,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  if (scored.length === 0 && (rootTitle || romajiToUse || titleToUse)) {
-    const fallbackSlug = slugify(rootTitle || romajiToUse || titleToUse);
-    scored.push({ slug: fallbackSlug, title: rootTitle || romajiToUse || titleToUse, type: input.is_movie ? 'MOVIE' : 'TV', score: 1 });
+  // 🎯 FIXED: Smart fallback for movies
+  if (scored.length === 0) {
+    if (input.is_movie) {
+      if (romajiToUse) scored.push({ slug: slugify(romajiToUse), title: romajiToUse, type: 'MOVIE', score: 1 });
+      if (titleToUse !== romajiToUse) scored.push({ slug: slugify(titleToUse), title: titleToUse, type: 'MOVIE', score: 1 });
+    } else {
+      const fallbackSlug = slugify(rootTitle || romajiToUse || titleToUse);
+      scored.push({ slug: fallbackSlug, title: rootTitle || romajiToUse || titleToUse, type: 'TV', score: 1 });
+    }
   }
 
   const basePromises = scored.map(c => fetchDerivedBase(c.slug));
