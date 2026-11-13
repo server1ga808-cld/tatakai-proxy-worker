@@ -23,7 +23,8 @@ export interface ChainSeason {
 export interface AniListMeta {
   current: ChainSeason;
   timeline: ChainSeason[];
-  immediatePrequelEpisodes: number; 
+  immediatePrequelEpisodes: number;
+  currentPrequelTitles: string[];
   synonyms: string[];
 }
 
