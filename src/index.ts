@@ -30,13 +30,6 @@ export default {
       const formattedStreams = Array.from(uniqueStreamsMap.values()).map(s => ({ server: s.server, url: s.url, source: 'tatakai-final' }));
       const langKey = input.preferred_lang || 'hindi';
 
-      // 🎯 Background Cache Warmup (Optional: pre-fetch next episode in background)
-      if (formattedStreams.length > 0 && input.episode < 500) {
-        ctx.waitUntil((async () => {
-           // Silent background warmup logic if needed
-        })());
-      }
-
       return new Response(JSON.stringify({ [langKey]: formattedStreams, hindi: formattedStreams }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
