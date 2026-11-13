@@ -38,6 +38,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   if (romajiToUse) queries.add(romajiToUse);
   if (rootTitle) queries.add(rootTitle);
 
+  // 🎯 Clean Query (Remove "Part N" or "Season N" to prevent AoT P2 search fail)
+  const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
+  if (cleanSearchQuery) queries.add(cleanSearchQuery);
+
   const seasonMatch = titleToUse.match(/season\s*(\d+)/i) || (input.season ? [null, String(input.season)] : null);
   if (seasonMatch && seasonMatch[1]) {
     queries.add(`${rootTitle} Season ${seasonMatch[1]}`);
@@ -58,16 +62,25 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   if (flatResults.length > 0) {
     const scoreMap = new Map<string, { cand: DesiSearchResult, score: number }>();
-    const reqHasSeason = /season|part|cour/i.test(titleToUse);
+    
+    // 🎯 Symmetric check includes Arc, Village, Movie to prevent False Penalties
+    const reqHasSeason = /season|part|cour|arc|village|movie/i.test(titleToUse);
     
     for (const cand of flatResults) {
       if (!cand || !cand.id) continue;
-      let score = Math.max(getSimilarityScore(titleToUse, cand.title), getSimilarityScore(romajiToUse, cand.title), getSimilarityScore(rootTitle, cand.title));
+      
+      // 🎯 Synonyms added to Scoring Array
+      let score = Math.max(
+        getSimilarityScore(titleToUse, cand.title), 
+        getSimilarityScore(romajiToUse, cand.title), 
+        getSimilarityScore(rootTitle, cand.title),
+        ...(aniMeta?.synonyms || []).map((s: string) => getSimilarityScore(s, cand.title))
+      );
       
       if (input.is_movie && cand.type.toUpperCase() !== 'MOVIE') score -= 0.2;
       if (!input.is_movie && cand.type.toUpperCase() === 'MOVIE') score -= 0.5;
       
-      const candHasSeason = /season|part|cour/i.test(cand.title);
+      const candHasSeason = /season|part|cour|arc|village|movie/i.test(cand.title);
       if (reqHasSeason !== candHasSeason) score -= 0.3;
 
       if (!scoreMap.has(cand.id) || score > scoreMap.get(cand.id)!.score) {
@@ -83,9 +96,10 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  if (scored.length === 0 && (romajiToUse || titleToUse)) {
-    const fallbackSlug = slugify(romajiToUse || titleToUse);
-    scored.push({ slug: fallbackSlug, title: romajiToUse || titleToUse, type: input.is_movie ? 'MOVIE' : 'TV', score: 1 });
+  // 🎯 Root Fallback: Falls back to Root Title slug instead of Romaji (AoT P2 fix)
+  if (scored.length === 0 && (rootTitle || romajiToUse || titleToUse)) {
+    const fallbackSlug = slugify(rootTitle || romajiToUse || titleToUse);
+    scored.push({ slug: fallbackSlug, title: rootTitle || romajiToUse || titleToUse, type: input.is_movie ? 'MOVIE' : 'TV', score: 1 });
   }
 
   const basePromises = scored.map(c => fetchDerivedBase(c.slug));
