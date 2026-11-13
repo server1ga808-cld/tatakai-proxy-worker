@@ -37,6 +37,16 @@ export function isAllowedServer(serverName: string): boolean {
   return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly') || s.includes('ruby');
 }
 
+// 🎯 New Function: Cleans raw HTML from Ruby server URLs
+export function cleanIframeUrl(url: string): string {
+  if (!url) return '';
+  if (url.includes('<iframe') || url.includes('<IFRAME')) {
+    const match = url.match(/src=['"](.+?)['"]/i);
+    return match ? match[1] : url;
+  }
+  return url;
+}
+
 const ROMAN_MAP: Record<string, string> = { 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5', 'vi': '6', 'vii': '7', 'viii': '8', 'ix': '9', 'x': '10' };
 
 export function normalizeNumeric(text: string): string {
