@@ -1,6 +1,6 @@
 import type { ProxyInput, Candidate, DesiSearchResult } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache, extractBaseNameFromEpisodeId } from './utils'; // 🎯 Check this line
+import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache, extractBaseNameFromEpisodeId } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -41,6 +41,15 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
   if (cleanSearchQuery && cleanSearchQuery !== rootTitle && cleanSearchQuery !== titleToUse) queries.add(cleanSearchQuery);
 
+  // 🎯 MOVIE QUERY FIX: Simplified queries for movies
+  if (input.is_movie) {
+    // "Demon Slayer: Kimetsu no Yaiba - The Movie: Infinity Castle" -> "Demon Slayer Movie"
+    const baseMovieQuery = rootTitle.split(':')[0].replace(/-/g, ' ').trim();
+    queries.add(`${baseMovieQuery} Movie`);
+    // Add specific keyword if it exists in title (e.g. "Infinity Castle")
+    if (titleToUse.includes('Infinity Castle')) queries.add(`${baseMovieQuery} Infinity Castle`);
+  }
+
   const seasonMatch = titleToUse.match(/season\s*(\d+)/i) || (input.season ? [null, String(input.season)] : null);
   if (seasonMatch && seasonMatch[1] && !rootTitle.toLowerCase().includes('season')) {
     queries.add(`${rootTitle} Season ${seasonMatch[1]}`);
@@ -48,8 +57,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     queries.add(`${rootTitle} Season 1`);
   }
 
-  const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 4);
-  const cacheKey = `search-v27-${slugify(titleToUse)}`;
+  const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
+  const cacheKey = `search-v28-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
