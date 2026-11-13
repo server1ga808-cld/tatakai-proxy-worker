@@ -8,7 +8,9 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
-    const res = await fetchWithTimeout(url, {}, 6000); 
+    
+    // 🎯 FIXED: Increased timeout to 10s (10000ms) for Render cold starts
+    const res = await fetchWithTimeout(url, {}, 10000); 
     if (!res.ok) return null;
     
     const json: any = await res.json();
@@ -35,8 +37,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  // 🎯 FIXED: Cache bumped to v29
-  const resolvedCacheKey = `resolved-v29-${input.anilist_id}-${preferredLang}`;
+  // 🎯 FIXED: Bumped to v30
+  const resolvedCacheKey = `resolved-v30-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
@@ -73,7 +75,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
       let primaryEps: (number | null)[] = [];
       if (input.is_movie) {
-        // 🎯 For movies, we only probe null (direct slug) and 1 (episode-1)
         primaryEps = [null, 1];
       } else {
         if (prequelEps > 0) primaryEps.push(input.episode + prequelEps);
