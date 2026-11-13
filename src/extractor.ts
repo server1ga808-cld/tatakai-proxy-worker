@@ -37,8 +37,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  // 🎯 FIXED: Bumped to v30
-  const resolvedCacheKey = `resolved-v30-${input.anilist_id}-${preferredLang}`;
+  // 🎯 FIXED: Bumped to v31
+  const resolvedCacheKey = `resolved-v31-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
