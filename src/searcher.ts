@@ -38,14 +38,13 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   if (romajiToUse) queries.add(romajiToUse);
   if (rootTitle && rootTitle !== titleToUse) queries.add(rootTitle);
 
-  const cleanSearchQuery = rootTitle.replace(/\s+part\s+\d+.*/i, '').replace(/\s+season\s+\d+.*/i, '').trim();
-  if (cleanSearchQuery && cleanSearchQuery !== rootTitle && cleanSearchQuery !== titleToUse) queries.add(cleanSearchQuery);
-
-  // 🎯 MOVIE QUERY FIX
+  // 🎯 MOVIE QUERY FIX (Sanitize long titles)
   if (input.is_movie) {
     const baseMovieQuery = rootTitle.split(':')[0].replace(/-/g, ' ').trim();
     if (baseMovieQuery) queries.add(`${baseMovieQuery} Movie`);
     if (titleToUse.includes('Infinity Castle')) queries.add(`${baseMovieQuery} Infinity Castle`);
+    // Add specific romaji keyword for exact Tatakai match
+    if (romajiToUse) queries.add(romajiToUse);
   }
 
   const seasonMatch = titleToUse.match(/season\s*(\d+)/i) || (input.season ? [null, String(input.season)] : null);
@@ -57,8 +56,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 5);
   
-  // 🎯 FIXED: Bumped to v31 to bypass poisoned cache
-  const cacheKey = `search-v31-${slugify(titleToUse)}`;
+  // 🎯 FIXED: Bumped to v32 to bypass poisoned cache
+  const cacheKey = `search-v32-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
@@ -108,7 +107,7 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  // 🎯 FIXED: Smart fallback for movies
+  // 🎯 Smart fallback for movies
   if (scored.length === 0) {
     if (input.is_movie) {
       if (romajiToUse) scored.push({ slug: slugify(romajiToUse), title: romajiToUse, type: 'MOVIE', score: 1 });
