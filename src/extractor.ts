@@ -1,6 +1,6 @@
 import type { Candidate, ProxyInput, DesiSource } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache, cleanIframeUrl } from './utils'; // 🎯 Ensure imports are correct
+import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache, cleanIframeUrl } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -35,8 +35,8 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  // 🎯 Updated to v27
-  const resolvedCacheKey = `resolved-v27-${input.anilist_id}-${preferredLang}`;
+  // 🎯 Bumped to v28
+  const resolvedCacheKey = `resolved-v28-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
@@ -73,6 +73,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
       let primaryEps: (number | null)[] = [];
       if (input.is_movie) {
+        // 🎯 For movies, we only probe null (direct slug) and 1 (episode-1)
         primaryEps = [null, 1];
       } else {
         if (prequelEps > 0) primaryEps.push(input.episode + prequelEps);
