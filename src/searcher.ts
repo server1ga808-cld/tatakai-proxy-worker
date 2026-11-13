@@ -1,8 +1,21 @@
-// ... (imports same as before)
+import type { ProxyInput, Candidate, DesiSearchResult } from './types';
+import { getAniListMeta } from './anilist';
+import { fetchWithTimeout, getSimilarityScore, getRootTitle, slugify, getCache, setCache, extractBaseNameFromEpisodeId } from './utils';
+
+const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
+
+async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
+  try {
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 8000);
+    if (!res.ok) return [];
+    const json: any = await res.json();
+    return json?.data?.results || [];
+  } catch { return []; }
+}
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    // 🎯 Increased timeout to 10s for Render cold starts
+    // 🎯 Safe timeout 10s for Render cold starts
     const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 10000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
@@ -37,8 +50,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   }
 
   const finalQueries = Array.from(queries).filter(q => q && q.length > 2).slice(0, 4);
-  // 🎯 Bumped cache key to v26 to bypass old cached data
-  const cacheKey = `search-v26-${slugify(titleToUse)}`;
+  // 🎯 Bumped Cache to v27 to bypass any old/stale data
+  const cacheKey = `search-v27-${slugify(titleToUse)}`;
   
   const cached = await getCache<Candidate[]>(cacheKey);
   if (cached) return cached;
@@ -97,8 +110,14 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   const bases = await Promise.all(basePromises);
 
   for (let i = 0; i < scored.length; i++) {
-    // 🎯 FIXED: Fallback to Romaji/Title slug instead of just the candidate slug
-    scored[i].derivedBaseName = bases[i] || slugify(romajiToUse || titleToUse);
+    // 🎯 THE GOLDEN FALLBACK CHAIN (As suggested by you)
+    const cleanRomajiRoot = getRootTitle(romajiToUse || titleToUse);
+    const fallbackBase = slugify(cleanRomajiRoot);
+    
+    // 1. Try Info API Base
+    // 2. Try Root Romaji/Title Base (e.g. shingeki-no-kyojin-the-final-season)
+    // 3. Try Tatakai Search Slug (e.g. demon-slayer-season-3)
+    scored[i].derivedBaseName = bases[i] || fallbackBase || scored[i].slug;
   }
 
   await setCache(cacheKey, scored, 86400); 
