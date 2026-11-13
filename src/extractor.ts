@@ -5,7 +5,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
   const preferredLang = input.preferred_lang || 'hindi';
   // 🎯 Bumped cache key to v26
-  const resolvedCacheKey = `resolved-v26-${input.anilist_id}-${preferredLang}`;
+  const resolvedCacheKey = `resolved-v27-${input.anilist_id}-${preferredLang}`;
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
   if (cachedResolved) {
