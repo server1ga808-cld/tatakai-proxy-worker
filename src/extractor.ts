@@ -10,7 +10,8 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
     
-    const res = await fetchWithTimeout(url, {}, 10000); 
+    // 🎯 10s → 8s (safe: real is 1-3s, cold start can hit 6-7s)
+    const res = await fetchWithTimeout(url, {}, 8000); 
     if (!res.ok) return null;
     
     const json: any = await res.json();
@@ -113,4 +114,4 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   
   console.log(`[EXTRACT] ❌ All bases and offsets failed.`);
   return [];
-    }
+}
