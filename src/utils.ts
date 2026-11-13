@@ -15,7 +15,6 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   }
 }
 
-// 🎯 Ensure these are EXPORTED
 export async function getCache<T>(key: string): Promise<T | null> {
   try {
     const res = await caches.default.match(new Request(`https://cache.internal/${key}`));
