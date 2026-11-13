@@ -17,8 +17,7 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
 
 export async function getCache<T>(key: string): Promise<T | null> {
   try {
-    const cacheUrl = `https://cache.internal/${key}`;
-    const res = await caches.default.match(new Request(cacheUrl));
+    const res = await caches.default.match(new Request(`https://cache.internal/${key}`));
     if (!res) return null;
     return await res.json() as T;
   } catch { return null; }
@@ -26,21 +25,16 @@ export async function getCache<T>(key: string): Promise<T | null> {
 
 export async function setCache<T>(key: string, data: T, ttlSeconds: number = 86400): Promise<void> {
   try {
-    const cacheUrl = `https://cache.internal/${key}`;
     const res = new Response(JSON.stringify(data), {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttlSeconds}` }
     });
-    await caches.default.put(new Request(cacheUrl), res);
+    await caches.default.put(new Request(`https://cache.internal/${key}`), res);
   } catch { }
 }
 
 export function isAllowedServer(serverName: string): boolean {
   const s = serverName.toLowerCase();
-  return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly');
-}
-
-export function isLanguageRestricted(slugOrTitle: string, preferredLang: string = 'hindi'): boolean {
-  return false; // Streams are multi-audio, no need to block
+  return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly') || s.includes('ruby');
 }
 
 const ROMAN_MAP: Record<string, string> = { 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5', 'vi': '6', 'vii': '7', 'viii': '8', 'ix': '9', 'x': '10' };
@@ -77,26 +71,27 @@ export function getSimilarityScore(a: string, b: string): number {
   return Math.min(1, (jaccard * 0.7) + ((prefixMatch === minLen && minLen > 0 ? 1 : (prefixMatch >= 2 ? 0.5 : 0)) * 0.3));
 }
 
-// 🎯 ১০০% বুলেটপ্রুফ ভেরিফিকেশন (মাল্টি-অডিও ট্যাগ হ্যান্ডেল করার জন্য)
 export function verifyEpisodeNumber(desiTitle: string, targetEp: number, isMovie: boolean = false): boolean {
   if (isMovie) return true;
   if (!desiTitle) return false;
   
   const normalized = desiTitle.toLowerCase();
   
-  // ১. প্রথমে "Episode X" বা "Ep X" খোঁজা
   let match = normalized.match(/(?:episode|ep)\.?\s*[-:/\s]*\s*0?(\d+)(?!\d)/i);
   if (match) return parseInt(match[1], 10) === targetEp;
   
-  // ২. ব্র্যাকেট এবং সিজন/পার্ট রিমুভ করে ক্লিন করা
   const cleanTitle = normalized
-    .replace(/\[[^\]]*\]|\([^)]*\)/g, '') // ব্র্যাকেটের ভেতরের সব লেখা মুছে ফেলবে (যেমন [Hindi + Bengali])
-    .replace(/\b(?:season|part|cour|s|p)\s*\d+\b/gi, '') // "part 2" বা "season 3" মুছে ফেলবে
+    .replace(/\[[^\]]*\]|\([^)]*\)/g, '')
+    .replace(/\b(?:season|part|cour|s|p)\s*\d+\b/gi, '')
     .trim();
     
-  // ৩. এবার ক্লিন করা টাইটেলের শেষে থাকা এপিসোড নম্বর খোঁজা
   match = cleanTitle.match(/(?:^|[-:/\s])\s*0?(\d+)(?!\d)\s*$/i);
   if (match) return parseInt(match[1], 10) === targetEp;
   
   return false; 
+}
+
+export function extractBaseNameFromEpisodeId(episodeId: string): string | null {
+  const match = episodeId.match(/(.+?)-episode-\d+/i);
+  return match ? match[1] : null;
 }
