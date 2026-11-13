@@ -15,23 +15,6 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   }
 }
 
-export async function getCache<T>(key: string): Promise<T | null> {
-  try {
-    const res = await caches.default.match(new Request(`https://cache.internal/${key}`));
-    if (!res) return null;
-    return await res.json() as T;
-  } catch { return null; }
-}
-
-export async function setCache<T>(key: string, data: T, ttlSeconds: number = 86400): Promise<void> {
-  try {
-    const res = new Response(JSON.stringify(data), {
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': `max-age=${ttlSeconds}` }
-    });
-    await caches.default.put(new Request(`https://cache.internal/${key}`), res);
-  } catch { }
-}
-
 export function isAllowedServer(serverName: string): boolean {
   const s = serverName.toLowerCase();
   return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly') || s.includes('ruby');
@@ -46,7 +29,6 @@ export function cleanIframeUrl(url: string): string {
     if (match) cleaned = match[1].trim();
   }
   
-  // 🎯 FIXED: Add https: protocol if URL starts with //
   if (cleaned.startsWith('//')) {
     cleaned = 'https:' + cleaned;
   }
