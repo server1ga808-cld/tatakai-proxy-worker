@@ -1,6 +1,6 @@
 import type { Candidate, ProxyInput, DesiSource } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache } from './utils';
+import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, getCache, setCache, cleanIframeUrl } from './utils';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
@@ -19,7 +19,13 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     
     const validSources: DesiSource[] = [];
     for (const src of rawSources) {
-      if (isAllowedServer(src.server || '')) validSources.push({ server: src.server, url: src.url, type: src.type || 'embed' });
+      if (isAllowedServer(src.server || '')) {
+        validSources.push({ 
+          server: src.server, 
+          url: cleanIframeUrl(src.url), 
+          type: src.type || 'embed' 
+        });
+      }
     }
     return validSources.length > 0 ? validSources : null;
   } catch { return null; }
