@@ -2,9 +2,10 @@ import type { AniListMeta, ChainSeason } from './types';
 import { fetchWithTimeout } from './utils';
 import { getCache, setCache, getAniListCacheKey, TTL } from './cache';
 
+// 🎯 Updated: Deno Deploy replaced with new Render Hybrid Proxy
 const ANILIST_ENDPOINTS = [
-  "https://gojotv-anilist-proxy.taiwansixtynine0987-arch.deno.net/graphql",
-  "https://graphql.anilist.co"
+  "https://hy-proxy.onrender.com/graphql", // নতুন Render Hybrid Proxy
+  "https://graphql.anilist.co"            // Fallback (যদিও Cloudflare Worker থেকে ব্লক হতে পারে)
 ];
 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
@@ -19,7 +20,10 @@ async function tryEndpoint(idx: number, query: string, variables: any, timeoutMs
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, variables })
     }, timeoutMs);
-    if (!res.ok) return null;
+    
+    // যদি রেসপন্স 429 (Rate Limit) বা 500 হয়, তবে null রিটার্ন করবে যাতে ফলব্যাক ট্রাই করা যায়
+    if (!res.ok) return null; 
+    
     const json: any = await res.json();
     if (!json?.data?.Media) return null;
     return json.data;
@@ -27,13 +31,13 @@ async function tryEndpoint(idx: number, query: string, variables: any, timeoutMs
 }
 
 async function gqlRequest(query: string, variables: any): Promise<any> {
-  // 🎯 Step 1: Try current healthy endpoint with 6s timeout
-  let result = await tryEndpoint(healthyEndpointIdx, query, variables, 6000);
+  // 🎯 Step 1: Try current healthy endpoint with 12s timeout (Increased for Render cold starts)
+  let result = await tryEndpoint(healthyEndpointIdx, query, variables, 12000);
   if (result) return result;
 
-  // 🎯 Step 2: Try backup endpoint with 6s timeout
+  // 🎯 Step 2: Try backup endpoint with 8s timeout
   const backupIdx = 1 - healthyEndpointIdx;
-  result = await tryEndpoint(backupIdx, query, variables, 6000);
+  result = await tryEndpoint(backupIdx, query, variables, 8000);
   if (result) {
     healthyEndpointIdx = backupIdx; // Mark backup as healthy for future
     return result;
