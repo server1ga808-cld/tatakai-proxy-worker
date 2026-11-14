@@ -1,6 +1,6 @@
 // 🎯 Central Cache Configuration
 // Bump CACHE_VERSION here to invalidate ALL caches globally
-export const CACHE_VERSION = "v34";
+export const CACHE_VERSION = "v35";
 
 export const TTL = {
   ANILIST_META: 86400 * 7,      // 7 days
