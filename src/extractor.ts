@@ -1,6 +1,6 @@
 import type { Candidate, ProxyInput, DesiSource } from './types';
 import { getAniListMeta } from './anilist';
-import { fetchWithTimeout, isAllowedServer, verifyEpisodeNumber, getSimilarityScore, cleanIframeUrl } from './utils';
+import { fetchWithTimeout, verifyEpisodeNumber, getSimilarityScore, cleanIframeUrl } from './utils';
 import { getCache, setCache, getResolvedCacheKey, TTL } from './cache';
 
 const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
@@ -10,7 +10,7 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
     const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
     
-    // 🎯 10s → 8s (safe: real is 1-3s, cold start can hit 6-7s)
+    // 🎯 8s timeout (safe for cold starts)
     const res = await fetchWithTimeout(url, {}, 8000); 
     if (!res.ok) return null;
     
@@ -18,14 +18,16 @@ async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie
     const rawSources = json?.data?.sources || [];
     const title = json?.data?.title || "";
     
+    // 🎯 Title Verification (Prevent wrong episode)
     if (epNum !== null && title && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
     
     const validSources: DesiSource[] = [];
     for (const src of rawSources) {
-      if (isAllowedServer(src.server || '')) {
+      // 🎯 FIXED: isAllowedServer removed. Accept ALL servers.
+      if (src.url && src.server) {
         validSources.push({ 
           server: src.server, 
-          url: cleanIframeUrl(src.url), 
+          url: cleanIframeUrl(src.url), // 🎯 Extracts from HTML and fixes // protocol
           type: src.type || 'embed' 
         });
       }
@@ -38,6 +40,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
+  // 🎯 Cache version relies on cache.ts (v36)
   const resolvedCacheKey = getResolvedCacheKey(input.anilist_id, preferredLang);
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
@@ -61,6 +64,7 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     for (const base of bases) {
       const baseClean = base.replace(/-/g, ' ');
       
+      // 🎯 Dynamic P1 Blocking
       const prequelScore = prequelTitles.length > 0 
         ? Math.max(...prequelTitles.map((p: string) => getSimilarityScore(p, baseClean))) 
         : 0;
