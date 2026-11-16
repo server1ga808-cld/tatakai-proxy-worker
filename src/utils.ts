@@ -15,20 +15,19 @@ export async function fetchWithTimeout(url: string, options: RequestInit = {}, t
   }
 }
 
-export function isAllowedServer(serverName: string): boolean {
-  const s = serverName.toLowerCase();
-  return s.includes('mirror') || s.includes('abyss') || s.includes('vmoly') || s.includes('ruby');
-}
+// 🎯 FIXED: Removed isAllowedServer (Dead code). We now accept all servers dynamically.
 
 export function cleanIframeUrl(url: string): string {
   if (!url) return '';
   let cleaned = url.trim();
   
+  // Extract from <iframe src="..."></iframe>
   if (cleaned.includes('<iframe') || cleaned.includes('<IFRAME')) {
     const match = cleaned.match(/src=['"](.+?)['"]/i);
     if (match) cleaned = match[1].trim();
   }
   
+  // Fix protocol-relative URLs (//vidmoly.net...)
   if (cleaned.startsWith('//')) {
     cleaned = 'https:' + cleaned;
   }
