@@ -2,45 +2,77 @@ import type { AniListMeta, ChainSeason } from './types';
 import { fetchWithTimeout } from './utils';
 import { getCache, setCache, getAniListCacheKey, TTL } from './cache';
 
-// 🎯 Updated: Deno Deploy replaced with new Render Hybrid Proxy
-const ANILIST_ENDPOINTS = [
-  "https://hy-proxy.onrender.com/graphql", // নতুন Render Hybrid Proxy
-  "https://graphql.anilist.co"            // Fallback (যদিও Cloudflare Worker থেকে ব্লক হতে পারে)
+// 🎯 Dual Render Hybrid Proxy Setup
+const ANILIST_PROXIES = [
+  "https://hy-proxy.onrender.com/graphql",
+  "https://hy-proxy-2.onrender.com/graphql"
 ];
+
+// 🎯 Render Proxy API Key
+const PROXY_API_KEY = "my-super-secret-key-123";
 
 const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'OVA', 'ONA', 'SPECIAL'];
 
-// 🎯 Health-Tracking: Remember which endpoint works to avoid double calls
-let healthyEndpointIdx = 0;
+// 🎯 Round-Robin Counter for load balancing
+let currentProxyIndex = 0;
 
-async function tryEndpoint(idx: number, query: string, variables: any, timeoutMs: number): Promise<any | null> {
+async function tryProxy(proxyIndex: number, query: string, variables: any, timeoutMs: number): Promise<any | null> {
   try {
-    const res = await fetchWithTimeout(ANILIST_ENDPOINTS[idx], {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-API-Key': PROXY_API_KEY
+    };
+
+    const res = await fetchWithTimeout(ANILIST_PROXIES[proxyIndex], {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ query, variables })
     }, timeoutMs);
     
-    // যদি রেসপন্স 429 (Rate Limit) বা 500 হয়, তবে null রিটার্ন করবে যাতে ফলব্যাক ট্রাই করা যায়
-    if (!res.ok) return null; 
+    if (!res.ok) {
+      console.log(`[ANILIST] Proxy ${proxyIndex} failed with status: ${res.status}`);
+      return null; 
+    }
     
     const json: any = await res.json();
     if (!json?.data?.Media) return null;
     return json.data;
-  } catch { return null; }
+  } catch (e: any) { 
+    console.log(`[ANILIST] Proxy ${proxyIndex} error: ${e.message}`);
+    return null; 
+  }
 }
 
 async function gqlRequest(query: string, variables: any): Promise<any> {
-  // 🎯 Step 1: Try current healthy endpoint with 12s timeout (Increased for Render cold starts)
-  let result = await tryEndpoint(healthyEndpointIdx, query, variables, 12000);
+  // Determine which proxies to try (Current and Next)
+  const firstProxy = currentProxyIndex;
+  const secondProxy = (currentProxyIndex + 1) % 2;
+  
+  // Rotate for the NEXT request
+  currentProxyIndex = secondProxy;
+
+  // Try 1st Proxy (10s timeout)
+  let result = await tryProxy(firstProxy, query, variables, 10000);
   if (result) return result;
 
-  // 🎯 Step 2: Try backup endpoint with 8s timeout
-  const backupIdx = 1 - healthyEndpointIdx;
-  result = await tryEndpoint(backupIdx, query, variables, 8000);
-  if (result) {
-    healthyEndpointIdx = backupIdx; // Mark backup as healthy for future
-    return result;
+  // Try 2nd Proxy (10s timeout)
+  result = await tryProxy(secondProxy, query, variables, 10000);
+  if (result) return result;
+
+  // Final fallback to direct AniList (5s timeout - fail fast since CF blocks it usually)
+  try {
+    const res = await fetchWithTimeout("https://graphql.anilist.co", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables })
+    }, 5000); // 🎯 Reduced from 8s to 5s
+    
+    if (res.ok) {
+      const json: any = await res.json();
+      return json?.data || null;
+    }
+  } catch { 
+    console.log(`[ANILIST] Direct fallback failed or timed out.`);
   }
 
   return null;
