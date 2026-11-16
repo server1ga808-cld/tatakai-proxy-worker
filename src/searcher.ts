@@ -7,7 +7,7 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    // 🎯 8s → 7s (safe: real is 1s, cold start can hit 5-6s)
+    // 🎯 7s timeout (Cold start may take ~8s, but uptime robot should keep it warm)
     const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 7000);
     if (!res.ok) return [];
     const json: any = await res.json();
@@ -17,7 +17,6 @@ async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    // 🎯 10s → 8s (safe: real is 1.4s, cold start can hit 6-7s)
     const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 8000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
@@ -124,7 +123,8 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   for (let i = 0; i < scored.length; i++) {
     const cleanRomajiRoot = getRootTitle(romajiToUse || titleToUse);
     const fallbackBase = slugify(cleanRomajiRoot);
-    scored[i].derivedBaseName = bases[i] || fallbackBase || scored[i].slug;
+    // 🎯 CRITICAL FIX: Prioritize Tatakai's original slug (handles unicode like ½) over fallbackBase
+    scored[i].derivedBaseName = bases[i] || scored[i].slug || fallbackBase;
   }
 
   await setCache(cacheKey, scored, TTL.SEARCH_RESULTS); 
