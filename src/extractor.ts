@@ -8,26 +8,33 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 async function fetchTatakaiWatch(baseName: string, epNum: number | null, isMovie: boolean): Promise<DesiSource[] | null> {
   try {
     const suffix = epNum !== null ? `-episode-${epNum}` : '';
-    const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${baseName}${suffix}`;
     
-    // 🎯 8s timeout (safe for cold starts)
-    const res = await fetchWithTimeout(url, {}, 8000); 
+    // 🎯 FIXED: Safely encode the baseName to handle unicode (½) without double encoding
+    let safeBaseName = baseName;
+    try {
+      safeBaseName = encodeURI(decodeURIComponent(baseName));
+    } catch {
+      safeBaseName = encodeURI(baseName);
+    }
+    
+    const url = `${TATAKAI_BASE}/api/v1/desidubanime/watch/${safeBaseName}${suffix}`;
+    
+    // 🎯 Reduced timeout to 6s to fail fast
+    const res = await fetchWithTimeout(url, {}, 6000); 
     if (!res.ok) return null;
     
     const json: any = await res.json();
     const rawSources = json?.data?.sources || [];
     const title = json?.data?.title || "";
     
-    // 🎯 Title Verification (Prevent wrong episode)
     if (epNum !== null && title && !verifyEpisodeNumber(title, epNum, isMovie)) return null;
     
     const validSources: DesiSource[] = [];
     for (const src of rawSources) {
-      // 🎯 FIXED: isAllowedServer removed. Accept ALL servers.
       if (src.url && src.server) {
         validSources.push({ 
           server: src.server, 
-          url: cleanIframeUrl(src.url), // 🎯 Extracts from HTML and fixes // protocol
+          url: cleanIframeUrl(src.url), 
           type: src.type || 'embed' 
         });
       }
@@ -40,7 +47,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
   if (candidates.length === 0) return [];
 
   const preferredLang = input.preferred_lang || 'hindi';
-  // 🎯 Cache version relies on cache.ts (v36)
   const resolvedCacheKey = getResolvedCacheKey(input.anilist_id, preferredLang);
 
   const cachedResolved = await getCache<{ bestSlug: string, offset: number }>(resolvedCacheKey);
@@ -64,7 +70,6 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
     for (const base of bases) {
       const baseClean = base.replace(/-/g, ' ');
       
-      // 🎯 Dynamic P1 Blocking
       const prequelScore = prequelTitles.length > 0 
         ? Math.max(...prequelTitles.map((p: string) => getSimilarityScore(p, baseClean))) 
         : 0;
@@ -81,8 +86,14 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
       if (input.is_movie) {
         primaryEps = [null, 1];
       } else {
-        if (prequelEps > 0) primaryEps.push(input.episode + prequelEps);
         primaryEps.push(input.episode); 
+        if (prequelEps > 0) {
+          primaryEps.push(input.episode + prequelEps);
+          // 🎯 FIXED: Add double offset to handle Merged Seasons (e.g. Ranma ½ S1+S2)
+          if (!primaryEps.includes(input.episode + (prequelEps * 2))) {
+            primaryEps.push(input.episode + (prequelEps * 2));
+          }
+        }
         
         if (isPrequelSlug) primaryEps = primaryEps.filter(e => e !== null && e > prequelEps);
       }
@@ -94,7 +105,10 @@ export async function extractStreams(candidates: Candidate[], input: ProxyInput)
 
       if (!valid && !input.is_movie) {
         let fallbackEps: (number|null)[] = [input.episode + 1];
-        if (prequelEps > 0) fallbackEps.push(input.episode + prequelEps + 1);
+        if (prequelEps > 0) {
+          fallbackEps.push(input.episode + prequelEps + 1);
+          fallbackEps.push(input.episode + (prequelEps * 2) + 1);
+        }
         
         if (isPrequelSlug) fallbackEps = fallbackEps.filter(e => e !== null && e > prequelEps);
         fallbackEps = [...new Set(fallbackEps.filter(e => e !== null && e > 0 && !primaryEps.includes(e)))];
