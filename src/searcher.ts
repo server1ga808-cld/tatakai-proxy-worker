@@ -7,7 +7,6 @@ const TATAKAI_BASE = "https://tatakai-api-2qqx.onrender.com";
 
 async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
   try {
-    // 🎯 7s timeout (Cold start may take ~8s, but uptime robot should keep it warm)
     const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/search/${encodeURIComponent(query)}`, {}, 7000);
     if (!res.ok) return [];
     const json: any = await res.json();
@@ -17,7 +16,8 @@ async function searchTatakai(query: string): Promise<DesiSearchResult[]> {
 
 async function fetchDerivedBase(slug: string): Promise<string | undefined> {
   try {
-    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 8000);
+    // 🎯 FIXED: Reduced timeout to 4000ms to prevent 8-second hangs on non-existent slugs
+    const res = await fetchWithTimeout(`${TATAKAI_BASE}/api/v1/desidubanime/anime/${slug}`, {}, 4000);
     if (!res.ok) return undefined;
     const data: any = await res.json();
     const episodes = data?.data?.episodes || [];
@@ -40,7 +40,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   if (romajiToUse) queries.add(romajiToUse);
   if (rootTitle && rootTitle !== titleToUse) queries.add(rootTitle);
 
-  // 🎯 MOVIE QUERY FIX
   if (input.is_movie) {
     const baseMovieQuery = rootTitle.split(':')[0].replace(/-/g, ' ').trim();
     if (baseMovieQuery) queries.add(`${baseMovieQuery} Movie`);
@@ -106,7 +105,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
     scored = scored.slice(0, 3);
   }
 
-  // 🎯 Smart fallback for movies
   if (scored.length === 0) {
     if (input.is_movie) {
       if (romajiToUse) scored.push({ slug: slugify(romajiToUse), title: romajiToUse, type: 'MOVIE', score: 1 });
@@ -123,7 +121,6 @@ export async function getCandidateSlugs(input: ProxyInput): Promise<Candidate[]>
   for (let i = 0; i < scored.length; i++) {
     const cleanRomajiRoot = getRootTitle(romajiToUse || titleToUse);
     const fallbackBase = slugify(cleanRomajiRoot);
-    // 🎯 CRITICAL FIX: Prioritize Tatakai's original slug (handles unicode like ½) over fallbackBase
     scored[i].derivedBaseName = bases[i] || scored[i].slug || fallbackBase;
   }
 
